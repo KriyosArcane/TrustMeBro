@@ -2,7 +2,7 @@
 
 **TrustMeBro** is a comprehensive Authenticode signature manipulation tool designed for Red Team operations and security research. It unifies signature stealing, metadata cloning, and Subject Interface Package (SIP) hijacking into a single toolkit, available in both Python (cross-platform) and C++ (Windows native).
 
-> **Note:** A rewritten, rust version of this tool is available here: [TrustMeBro-Rust](https://github.com/placeholder/TrustMeBro-Rust)
+> **Note:** A rewritten, rust version of this tool is available here: [TrustMeBro-Rust](https://github.com/KriyosArcane/TrustMeBro-Rust)
 
 ## Features
 
