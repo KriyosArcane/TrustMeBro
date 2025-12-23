@@ -84,3 +84,9 @@ python3 TrustMeBro.py hijack 192.168.1.10 -u Administrator -p Password123 --acti
 
 ## Disclaimer
 This tool is intended for educational purposes and authorized security testing only. Misuse of this tool to attack systems without consent is illegal. The authors are not responsible for any damage caused by this software.
+
+## Credits & Inspirations
+Special thanks to the authors of the following tools for their pioneering research:
+
+*   **[SignatureKid](https://github.com/dslee2022/SignatureKid)** by [David Lee](https://www.linkedin.com/in/davidl24/) - For the research on signature manipulation and the original code that this tool is based on.
+*   **[MetaTwin](https://github.com/threatexpress/metatwin)** by ThreatExpress - For the concept of cloning binary metadata.
