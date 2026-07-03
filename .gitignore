@@ -36,6 +36,8 @@
 *.exe
 *.out
 *.app
+!bin/*.exe
 
 # debug information files
 *.dwo
+__pycache__/
