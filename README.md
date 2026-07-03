@@ -37,8 +37,19 @@ TrustMeBro/
 
 ## How It Works
 
+### SigFlip (CVE-2013-3900) — for comparison
 <p align="center">
-  <img src="docs/sigstash-diagram.svg" alt="SigStash payload embedding comparison — SigFlip vs Direct vs Camouflage" width="100%"/>
+  <img src="docs/01-sigflip.svg" alt="SigFlip embeds payload in certificate table padding" width="700"/>
+</p>
+
+### SigStash — Direct Mode
+<p align="center">
+  <img src="docs/02-sigstash-direct.svg" alt="SigStash Direct embeds payload as an unsignedAttr inside the DER" width="700"/>
+</p>
+
+### SigStash — Camouflage Mode
+<p align="center">
+  <img src="docs/03-sigstash-camouflage.svg" alt="SigStash Camouflage wraps payload in a fake nested signature" width="700"/>
 </p>
 
 ### Signature Stealing
