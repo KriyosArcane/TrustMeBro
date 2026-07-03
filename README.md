@@ -37,6 +37,10 @@ TrustMeBro/
 
 ## How It Works
 
+<p align="center">
+  <img src="docs/sigstash-diagram.svg" alt="SigStash payload embedding comparison — SigFlip vs Direct vs Camouflage" width="100%"/>
+</p>
+
 ### Signature Stealing
 
 Windows Authenticode signatures live in the `IMAGE_DIRECTORY_ENTRY_SECURITY` data directory. The tool reads the `WIN_CERTIFICATE` blob from a signed donor binary and appends it to your target, updating the PE header pointer.
