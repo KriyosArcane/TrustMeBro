@@ -48,6 +48,51 @@ TrustMeBro/
 
 ---
 
+## Smart App Control Bypass (Win11)
+
+TrustMeBro includes a SIP hijack for Windows 11 Smart App Control (SAC). This is a separate GUID not included in the default hijack set. You must opt in with `--sac`.
+
+**GUID:** `{18B3C141-AE0D-40F9-9465-E542AFC1ABC7}`
+
+**What SAC does:** Smart App Control blocks unsigned or untrusted executables from running on Win11 machines with enforcement enabled. It checks the SIP verification result via `SrpCheckSmartlockerEAandProcessToken` in wintrust.dll.
+
+**What the bypass does:** Redirects the SAC SIP's `CryptSIPDllVerifyIndirectData` to `ntdll!DbgUiContinue`. SAC's verification returns success for all files. Unsigned, unknown executables run without the "Smart App Control blocked an app" prompt.
+
+**What was observed during testing:**
+- Before hijack: SAC correctly blocked an unsigned EXE
+- After hijack + reboot: the unsigned EXE ran, MessageBox displayed
+- SAC settings UI showed "On" during the bypass. Enforcement was silently disabled at the SIP level.
+
+**How it was found:** Reverse engineered from Win11 24H2 wintrust.dll via Ghidra. The GUID sits in the builtin SIP table at `.rdata` offset `0x62410`. Cross-references reveal three kernel EAs: `$Kernel.Smartlocker.OriginClaim`, `$Kernel.Purge.Smartlocker.Valid`, `$Kernel.Smartlocker.Hash`.
+
+**Usage:**
+
+```cmd
+:: C++ (local)
+TrustMeBro.exe hijack --sip-types PE --sac
+
+:: Python (remote)
+python3 TrustMeBro.py hijack 10.0.0.1 -u Admin -p Pass --sac
+
+:: Python (local)
+python3 TrustMeBro.py hijack --local --sac
+
+:: Clean
+TrustMeBro.exe hijack --clean
+```
+
+The `probe` command reports whether SAC is active on the target:
+```
+TrustMeBro.exe probe
+  Smart App Control:       YES    <-- SAC is enforcing
+```
+
+> **Win11 only.** This GUID does not exist on Win10 or Server 2019. Using `--sac` on those systems writes a key that has no effect.
+
+**MITRE:** T1553.003 (Subvert Trust Controls: SIP and Trust Provider Hijacking) + T1562.001 (Impair Defenses: Disable or Modify Tools)
+
+---
+
 ## C++ Usage
 
 
