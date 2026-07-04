@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 360" font-family="Virgil, Segoe UI, sans-serif">
+  <defs>
+    <filter id="pencil" x="-2%" y="-2%" width="104%" height="104%">
+      <feTurbulence type="turbulence" baseFrequency="0.03" numOctaves="4" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.2" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+
+  <rect width="800" height="360" fill="#fafafa" rx="12"/>
+  <text x="400" y="30" text-anchor="middle" style="font-size:20px; font-weight:bold; fill:#1e1e1e;">WOW64 Registry Split</text>
+  <text x="400" y="50" text-anchor="middle" style="font-size:13px; fill:#888;">Hijack 32-bit callers. Leave 64-bit registry clean for EDR.</text>
+
+  <!-- 64-bit side -->
+  <text x="200" y="80" text-anchor="middle" style="font-size:15px; font-weight:bold; fill:#2e7d32;">64-bit Registry View</text>
+  <text x="200" y="97" text-anchor="middle" style="font-size:11px; fill:#888;">Read by 64-bit processes (signtool, Defender, EDR)</text>
+
+  <rect x="30" y="110" width="340" height="220" rx="8" fill="none" stroke="#2e7d32" stroke-width="2" stroke-dasharray="6,4" filter="url(#pencil)"/>
+
+  <rect x="50" y="130" width="300" height="30" rx="4" fill="#e8f5e9" stroke="#66bb6a" stroke-width="1.5" filter="url(#pencil)"/>
+  <text x="60" y="150" style="font-size:11px; fill:#333; font-family:monospace;">HKLM\SOFTWARE\...\{C689AAB8}</text>
+
+  <rect x="70" y="170" width="260" height="25" rx="3" fill="#c8e6c9" stroke="#81c784" stroke-width="1" filter="url(#pencil)"/>
+  <text x="200" y="188" text-anchor="middle" style="font-size:12px; fill:#1b5e20; font-weight:bold;">Dll = WINTRUST.DLL  (clean)</text>
+
+  <rect x="70" y="205" width="260" height="25" rx="3" fill="#c8e6c9" stroke="#81c784" stroke-width="1" filter="url(#pencil)"/>
+  <text x="200" y="223" text-anchor="middle" style="font-size:12px; fill:#1b5e20;">FuncName = CryptSIPVerifyIndirectData</text>
+
+  <rect x="60" y="250" width="280" height="30" rx="5" fill="#e8f5e9" stroke="#4caf50" stroke-width="1.5"/>
+  <text x="200" y="270" text-anchor="middle" style="font-size:12px; fill:#2e7d32; font-weight:bold;">EDR sees: everything normal</text>
+
+  <rect x="60" y="290" width="280" height="25" rx="4" fill="#fff" stroke="#bbb" stroke-width="1"/>
+  <text x="200" y="307" text-anchor="middle" style="font-size:11px; fill:#888;">Verification works correctly here</text>
+
+  <!-- 32-bit side -->
+  <text x="600" y="80" text-anchor="middle" style="font-size:15px; font-weight:bold; fill:#c62828;">32-bit Registry View (WOW6432Node)</text>
+  <text x="600" y="97" text-anchor="middle" style="font-size:11px; fill:#888;">Read by 32-bit processes (some PS, some tools)</text>
+
+  <rect x="430" y="110" width="340" height="220" rx="8" fill="none" stroke="#c62828" stroke-width="2" stroke-dasharray="6,4" filter="url(#pencil)"/>
+
+  <rect x="450" y="130" width="300" height="30" rx="4" fill="#ffebee" stroke="#ef5350" stroke-width="1.5" filter="url(#pencil)"/>
+  <text x="460" y="150" style="font-size:11px; fill:#333; font-family:monospace;">HKLM\...\WOW6432Node\...\{C689AAB8}</text>
+
+  <rect x="470" y="170" width="260" height="25" rx="3" fill="#e53935" stroke="#b71c1c" stroke-width="1.5" filter="url(#pencil)"/>
+  <text x="600" y="188" text-anchor="middle" style="font-size:12px; fill:#fff; font-weight:bold;">Dll = ntdll.dll  (hijacked)</text>
+
+  <rect x="470" y="205" width="260" height="25" rx="3" fill="#e53935" stroke="#b71c1c" stroke-width="1.5" filter="url(#pencil)"/>
+  <text x="600" y="223" text-anchor="middle" style="font-size:12px; fill:#fff;">FuncName = DbgUiContinue</text>
+
+  <rect x="460" y="250" width="280" height="30" rx="5" fill="#ffebee" stroke="#ef5350" stroke-width="1.5"/>
+  <text x="600" y="270" text-anchor="middle" style="font-size:12px; fill:#c62828; font-weight:bold;">32-bit callers: all checks pass</text>
+
+  <rect x="460" y="290" width="280" height="25" rx="4" fill="#fff" stroke="#bbb" stroke-width="1"/>
+  <text x="600" y="307" text-anchor="middle" style="font-size:11px; fill:#c62828;">No verification. Silent bypass.</text>
+</svg>
