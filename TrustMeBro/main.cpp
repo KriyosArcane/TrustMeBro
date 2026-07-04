@@ -173,6 +173,10 @@ void err(const char* call, LONG code, const char* msg) {
 // ---- main ----
 
 int main(int argc, char* argv[]) {
+    // Force line-buffered stdout/stderr so output appears over SSH/pipes
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+
     if (argc < 2) { print_main_help(argv[0]); return 1; }
     const char* cmd = argv[1];
 

