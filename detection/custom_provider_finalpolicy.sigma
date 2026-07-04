@@ -1,0 +1,20 @@
+title: Custom Trust Provider FinalPolicy Registration
+id: a5099c17-4671-47e2-86e9-4e7931b278a6
+status: experimental
+description: Detects registration of a non-standard action GUID under Cryptography Providers Trust FinalPolicy
+author: TrustMeBro
+date: 2026/07/03
+logsource:
+    category: registry_set
+    product: windows
+detection:
+    selection:
+        TargetObject|contains: '\Cryptography\Providers\Trust\FinalPolicy\'
+        Details|contains: 'SoftpubCleanup'
+    filter:
+        TargetObject|contains: '{00AAC56B-CD44-11d0-8CC2-00C04FC295EE}'
+    condition: selection and not filter
+level: high
+tags:
+    - attack.defense_evasion
+    - attack.t1553

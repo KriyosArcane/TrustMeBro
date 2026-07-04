@@ -1,0 +1,41 @@
+title: SIP Hijack - CryptSIPDllVerifyIndirectData Registry Modification
+id: a7c3e9f1-2b4d-4e8a-9c1f-3d5e7f8a0b2c
+status: experimental
+description: |
+    Detects any write to the PE SIP GUID registry key for CryptSIPDllVerifyIndirectData.
+    An attacker registering a rogue DLL export as the PE SIP verify handler causes
+    WinVerifyTrust to return S_OK for any PE regardless of signature validity.
+    Covers both the 8E78 (CryptSIPDllGetSignedDataMsg) and 14B6 (CryptSIPDllVerifyIndirectData)
+    variant GUIDs under {C689AAB8}.
+references:
+    - lab/poc/sip-hijack/loader.ps1
+    - https://specterops.io/wp-content/uploads/sites/3/2022/06/SpecterOps_Subverting_Trust_in_Windows.pdf
+author: Research
+date: 2026-06-04
+modified: 2026-06-04
+tags:
+    - attack.defense_evasion
+    - attack.t1553.002
+logsource:
+    product: windows
+    category: registry_set
+detection:
+    selection_key:
+        EventID: 13
+        TargetObject|contains:
+            - 'CryptSIPDllVerifyIndirectData'
+    selection_guid:
+        TargetObject|contains:
+            - 'C689AAB8-14B6-11d2-BD56-0000F803049C'
+            - 'C689AAB8-8E78-11d2-BD56-0000F803049C'
+    condition: selection_key and selection_guid
+falsepositives:
+    - Legitimate SIP provider registration by security software (rare; legitimate tools
+      register at install time, not at runtime from PowerShell or sc.exe)
+    - Developer workflows using mattifestation/PoCSubjectInterfacePackage for testing
+level: high
+fields:
+    - TargetObject
+    - Details
+    - Image
+    - User

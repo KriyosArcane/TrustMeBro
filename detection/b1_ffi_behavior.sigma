@@ -1,0 +1,74 @@
+title: Driver Service Created from Root Drive Path (b1-ffi Pattern)
+id: c3e5a7b9-4d6f-5a0c-9e3b-5f7a9b1d3f5e
+status: experimental
+description: |
+    Detects sc.exe or registry writes that create a kernel driver service where the
+    binary path (ImagePath) points to the root of a drive (e.g. C:\rogue1.sys) rather
+    than the canonical C:\Windows\System32\drivers\ location.
+    This is the b1-file-hash-ffi pattern: a driver placed at a root path uses the
+    EA-cache ($CI.CATALOGHINT) bypass primitive — the kernel CI fast-path reads the
+    cached hash from the NTFS EA rather than re-hashing the file. A file-swap after
+    the EA is written allows an unsigned driver to pass CI validation.
+    Gate 1 PENDING as of 2026-06-04 (experiment ran on w11, result processing).
+references:
+    - lab/poc/b1-file-hash-ffi/README.md
+    - lab/poc/b1-file-hash-ffi/docs/DESIGN.md
+author: Research
+date: 2026-06-04
+modified: 2026-06-04
+tags:
+    - attack.defense_evasion
+    - attack.t1553.006
+    - attack.t1014
+logsource:
+    product: windows
+    category: registry_set
+detection:
+    # Variant A: Registry write to Services key with root-path ImagePath
+    selection_service_registry:
+        EventID: 13
+        TargetObject|contains: '\SYSTEM\CurrentControlSet\Services\'
+        TargetObject|endswith: '\ImagePath'
+        Details|re: '^[A-Za-z]:\\[^\\]+\.sys$'
+    condition: selection_service_registry
+falsepositives:
+    - Uncommon but legitimate drivers installed to drive root (very rare in practice)
+level: high
+fields:
+    - TargetObject
+    - Details
+    - Image
+    - User
+---
+# Variant B: ProcessCreate — sc.exe with root-path binPath
+# Use this rule for environments with Sysmon EventID 1 enrichment.
+#
+# title: sc.exe Creating Driver Service from Root Drive Path
+# logsource:
+#     product: windows
+#     category: process_creation
+# detection:
+#     selection:
+#         EventID: 1
+#         Image|endswith: '\sc.exe'
+#         CommandLine|contains: 'type= kernel'
+#         CommandLine|re: 'binPath=\s*[A-Za-z]:\\[^\\]+\.sys'
+#     filter_legitimate:
+#         CommandLine|contains: '\Windows\System32\drivers\'
+#     condition: selection and not filter_legitimate
+#
+# Variant C: Sysmon EventID 6 (Driver Loaded) from non-standard path
+#
+# logsource:
+#     product: windows
+#     category: driver_loaded
+# detection:
+#     selection:
+#         EventID: 6
+#     filter_standard_paths:
+#         ImageLoaded|startswith:
+#             - 'C:\Windows\System32\drivers\'
+#             - 'C:\Windows\SysWOW64\'
+#             - 'C:\ProgramData\'
+#     condition: selection and not filter_standard_paths
+# level: high

