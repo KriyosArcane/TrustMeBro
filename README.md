@@ -27,8 +27,6 @@ TrustMeBro/
 └── README.md
 ```
 
-> **Beacon Object Files** are in a separate repo: [TrustMeBOF](https://github.com/KriyosArcane/TrustMeBOF). Clone it, run `make`, and load `cna/tmb.cna` (Cobalt Strike) or `axscript/tmb.axscript` (Adaptix).
-
 ---
 
 ## How It Works
@@ -274,10 +272,8 @@ rundll32.exe setupapi.dll,InstallHinfSection DefaultInstall 128 .\TrustMeBro\Tru
 
 ```bash
 git clone https://github.com/KriyosArcane/TrustMeBOF.git
-cd TrustMeBOF && make
+cd TrustMeBOF && ./setup.sh
 ```
-
-Load `cna/tmb.cna` in Cobalt Strike or `axscript/tmb.axscript` in Adaptix. Commands: `tmb_probe`, `tmb_finalpolicy`, `tmb_sip_hijack`, `tmb_wow64_hijack`, `tmb_custom_provider`, `tmb_sip_exec`, `tmb_clean`, `tmb_formatghost`. See the [TrustMeBOF README](https://github.com/KriyosArcane/TrustMeBOF) for full usage.
 
 ---
 
