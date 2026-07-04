@@ -292,15 +292,10 @@ YARA and Sigma rules in `detection/`. Test your payloads against these before de
 
 | File | Format | Detects |
 |---|---|---|
-| `sip_hijack_registry.yar` | YARA | SIP hijack via DbgUiContinue redirect |
-| `sip_hijack_gate1.yar` | YARA | SIP hijack gate-1 artifact |
-| `sip_hijack_expanded.yar` | YARA | SIP hijack on script and package file types |
-| `sip_hijack_registry_modify.sigma` | Sigma | SIP provider registry modification |
-| `custom_provider_finalpolicy.sigma` | Sigma | FinalPolicy under non-standard action GUID |
-| `shape2_dual_signerinfo.yar` | YARA | Dual SignerInfo in WIN_CERTIFICATE |
-| `esbcache_bypass.yar` | YARA | ESBCACHE EA manipulation |
-| `esbcache_bypass.sigma` | Sigma | Unsigned driver load via ESBCACHE |
-| `b1_ffi_behavior.sigma` | Sigma | Driver service from root drive path |
+| `trustmebro_sip_hijack.yar` | YARA | SIP hijack loaders and registry exports with DbgUiContinue |
+| `trustmebro_sip_hijack_registry.sigma` | Sigma | SIP provider registry modification |
+| `trustmebro_finalpolicy_hijack.sigma` | Sigma | FinalPolicy under non-standard action GUID |
+| `trustmebro_sigstash_embed.yar` | YARA | SigStash tooling and signed PEs with large WIN_CERTIFICATE |
 
 ---
 
