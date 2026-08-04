@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 480" font-family="Virgil, Segoe UI, sans-serif">
+  <defs>
+    <filter id="pencil" x="-2%" y="-2%" width="104%" height="104%">
+      <feTurbulence type="turbulence" baseFrequency="0.03" numOctaves="4" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.2" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+
+  <rect width="800" height="480" fill="#fafafa" rx="12"/>
+  <text x="400" y="32" text-anchor="middle" style="font-size:20px; font-weight:bold; fill:#1e1e1e;">SIP Hijack: Before and After</text>
+
+  <!-- BEFORE -->
+  <text x="200" y="62" text-anchor="middle" style="font-size:15px; font-weight:bold; fill:#2e7d32;">Normal Flow</text>
+  <rect x="40" y="80" width="320" height="370" rx="8" fill="none" stroke="#333" stroke-width="2" stroke-dasharray="6,4" filter="url(#pencil)"/>
+
+  <rect x="100" y="95" width="200" height="38" rx="6" fill="#e3f2fd" stroke="#42a5f5" stroke-width="2" filter="url(#pencil)"/>
+  <text x="200" y="120" text-anchor="middle" style="font-size:14px; fill:#1565c0;">WinVerifyTrust(file)</text>
+
+  <line x1="200" y1="133" x2="200" y2="155" stroke="#666" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="210" y="148" style="font-size:10px; fill:#888;">dispatch by GUID</text>
+
+  <rect x="80" y="158" width="240" height="38" rx="6" fill="#fff3e0" stroke="#ffb74d" stroke-width="2" filter="url(#pencil)"/>
+  <text x="200" y="183" text-anchor="middle" style="font-size:14px; fill:#e65100;">SIP: CryptSIPDllVerifyIndirectData</text>
+
+  <line x1="200" y1="196" x2="200" y2="218" stroke="#666" stroke-width="2"/>
+  <text x="210" y="211" style="font-size:10px; fill:#888;">registry lookup</text>
+
+  <rect x="90" y="221" width="220" height="38" rx="6" fill="#e8f5e9" stroke="#66bb6a" stroke-width="2" filter="url(#pencil)"/>
+  <text x="200" y="246" text-anchor="middle" style="font-size:13px; fill:#2e7d32;">Dll: WINTRUST.DLL</text>
+
+  <line x1="200" y1="259" x2="200" y2="281" stroke="#666" stroke-width="2"/>
+
+  <rect x="70" y="284" width="260" height="38" rx="6" fill="#e8f5e9" stroke="#66bb6a" stroke-width="2" filter="url(#pencil)"/>
+  <text x="200" y="309" text-anchor="middle" style="font-size:13px; fill:#2e7d32;">CryptSIPVerifyIndirectData()</text>
+
+  <line x1="200" y1="322" x2="200" y2="344" stroke="#666" stroke-width="2"/>
+
+  <rect x="100" y="347" width="200" height="38" rx="6" fill="#c8e6c9" stroke="#388e3c" stroke-width="2" filter="url(#pencil)"/>
+  <text x="200" y="372" text-anchor="middle" style="font-size:14px; fill:#1b5e20;">Hash verified. PASS/FAIL</text>
+
+  <rect x="90" y="400" width="220" height="30" rx="5" fill="#e8f5e9" stroke="#4caf50" stroke-width="1.5"/>
+  <text x="200" y="420" text-anchor="middle" style="font-size:12px; fill:#2e7d32; font-weight:bold;">Real verification happens</text>
+
+  <!-- AFTER -->
+  <text x="600" y="62" text-anchor="middle" style="font-size:15px; font-weight:bold; fill:#c62828;">After Hijack</text>
+  <rect x="440" y="80" width="320" height="370" rx="8" fill="none" stroke="#333" stroke-width="2" stroke-dasharray="6,4" filter="url(#pencil)"/>
+
+  <rect x="500" y="95" width="200" height="38" rx="6" fill="#e3f2fd" stroke="#42a5f5" stroke-width="2" filter="url(#pencil)"/>
+  <text x="600" y="120" text-anchor="middle" style="font-size:14px; fill:#1565c0;">WinVerifyTrust(file)</text>
+
+  <line x1="600" y1="133" x2="600" y2="155" stroke="#666" stroke-width="2"/>
+  <text x="610" y="148" style="font-size:10px; fill:#888;">dispatch by GUID</text>
+
+  <rect x="480" y="158" width="240" height="38" rx="6" fill="#fff3e0" stroke="#ffb74d" stroke-width="2" filter="url(#pencil)"/>
+  <text x="600" y="183" text-anchor="middle" style="font-size:14px; fill:#e65100;">SIP: CryptSIPDllVerifyIndirectData</text>
+
+  <line x1="600" y1="196" x2="600" y2="218" stroke="#666" stroke-width="2"/>
+  <text x="610" y="211" style="font-size:10px; fill:#c62828; font-weight:bold;">hijacked registry</text>
+
+  <rect x="490" y="221" width="220" height="38" rx="6" fill="#ffebee" stroke="#ef5350" stroke-width="2" filter="url(#pencil)"/>
+  <text x="600" y="246" text-anchor="middle" style="font-size:13px; fill:#c62828; font-weight:bold;">Dll: ntdll.dll</text>
+
+  <line x1="600" y1="259" x2="600" y2="281" stroke="#666" stroke-width="2"/>
+
+  <rect x="490" y="284" width="220" height="38" rx="6" fill="#ffebee" stroke="#ef5350" stroke-width="2" filter="url(#pencil)"/>
+  <text x="600" y="309" text-anchor="middle" style="font-size:13px; fill:#c62828; font-weight:bold;">DbgUiContinue()</text>
+
+  <line x1="600" y1="322" x2="600" y2="344" stroke="#666" stroke-width="2"/>
+
+  <rect x="500" y="347" width="200" height="38" rx="6" fill="#e53935" stroke="#b71c1c" stroke-width="2" filter="url(#pencil)"/>
+  <text x="600" y="372" text-anchor="middle" style="font-size:14px; fill:#fff; font-weight:bold;">Always returns TRUE</text>
+
+  <rect x="490" y="400" width="220" height="30" rx="5" fill="#ffebee" stroke="#ef5350" stroke-width="1.5"/>
+  <text x="600" y="420" text-anchor="middle" style="font-size:12px; fill:#c62828; font-weight:bold;">No verification. Everything passes.</text>
+</svg>
