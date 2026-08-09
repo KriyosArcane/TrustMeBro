@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 720" font-family="Virgil, Segoe UI, sans-serif">
+  <defs>
+    <filter id="pencil" x="-2%" y="-2%" width="104%" height="104%">
+      <feTurbulence type="turbulence" baseFrequency="0.03" numOctaves="4" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.2" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#555"/>
+    </marker>
+    <marker id="redarrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#c62828"/>
+    </marker>
+  </defs>
+
+  <rect width="900" height="720" fill="#fafafa" rx="12"/>
+  <text x="450" y="32" text-anchor="middle" style="font-size:20px; font-weight:bold; fill:#1e1e1e;">SIPExec v2: Lateral Movement via FinalPolicy Hijack</text>
+  <text x="450" y="52" text-anchor="middle" style="font-size:12px; fill:#888;">Shell inside wmiprvse.exe · No new process · Pipe C2 over SMB</text>
+
+  <!-- ═══════ LEFT: ATTACKER ═══════ -->
+  <rect x="30" y="70" width="260" height="630" rx="8" fill="none" stroke="#1565c0" stroke-width="2" stroke-dasharray="6,4" filter="url(#pencil)"/>
+  <text x="160" y="90" text-anchor="middle" style="font-size:14px; font-weight:bold; fill:#1565c0;">Attacker (Linux)</text>
+
+  <!-- Step 1: Stage DLL -->
+  <rect x="50" y="110" width="220" height="50" rx="6" fill="#e3f2fd" stroke="#42a5f5" stroke-width="2" filter="url(#pencil)"/>
+  <text x="160" y="132" text-anchor="middle" style="font-size:12px; fill:#1565c0; font-weight:bold;">① Stage Payload DLL</text>
+  <text x="160" y="149" text-anchor="middle" style="font-size:11px; fill:#1565c0;">SMB upload │ UNC serve │ -dll path</text>
+
+  <!-- Step 2: Hijack Registry -->
+  <rect x="50" y="185" width="220" height="50" rx="6" fill="#fff3e0" stroke="#ffb74d" stroke-width="2" filter="url(#pencil)"/>
+  <text x="160" y="207" text-anchor="middle" style="font-size:12px; fill:#e65100; font-weight:bold;">② Hijack FinalPolicy</text>
+  <text x="160" y="224" text-anchor="middle" style="font-size:11px; fill:#e65100;">WMI StdRegProv → $DLL, $Function</text>
+
+  <!-- Step 3: Kill wmiprvse -->
+  <rect x="50" y="260" width="220" height="45" rx="6" fill="#fce4ec" stroke="#e57373" stroke-width="2" filter="url(#pencil)"/>
+  <text x="160" y="280" text-anchor="middle" style="font-size:12px; fill:#c62828; font-weight:bold;">③ Kill cached wmiprvse</text>
+  <text x="160" y="296" text-anchor="middle" style="font-size:11px; fill:#c62828;">Win32_Process.Terminate()</text>
+
+  <!-- Step 4: Trigger -->
+  <rect x="50" y="330" width="220" height="50" rx="6" fill="#ede7f6" stroke="#7e57c2" stroke-width="2" filter="url(#pencil)"/>
+  <text x="160" y="352" text-anchor="middle" style="font-size:12px; fill:#4527a0; font-weight:bold;">④ WMI Trigger Query</text>
+  <text x="160" y="369" text-anchor="middle" style="font-size:11px; fill:#4527a0;">Win32_PnPSignedDriver</text>
+
+  <!-- Step 5: Connect pipe -->
+  <rect x="50" y="430" width="220" height="50" rx="6" fill="#e8f5e9" stroke="#66bb6a" stroke-width="2" filter="url(#pencil)"/>
+  <text x="160" y="452" text-anchor="middle" style="font-size:12px; fill:#2e7d32; font-weight:bold;">⑤ Connect Named Pipe</text>
+  <text x="160" y="469" text-anchor="middle" style="font-size:11px; fill:#2e7d32;">SMB → IPC$ → \\pipe\sipexec</text>
+
+  <!-- Step 6: Shell -->
+  <rect x="50" y="510" width="220" height="45" rx="6" fill="#c8e6c9" stroke="#388e3c" stroke-width="2" filter="url(#pencil)"/>
+  <text x="160" y="530" text-anchor="middle" style="font-size:12px; fill:#1b5e20; font-weight:bold;">⑥ Interactive Shell</text>
+  <text x="160" y="546" text-anchor="middle" style="font-size:11px; fill:#1b5e20;">cmd → pipe → output → pipe</text>
+
+  <!-- Step 7: Cleanup -->
+  <rect x="50" y="590" width="220" height="55" rx="6" fill="#efebe9" stroke="#8d6e63" stroke-width="2" filter="url(#pencil)"/>
+  <text x="160" y="612" text-anchor="middle" style="font-size:12px; fill:#4e342e; font-weight:bold;">⑦ Cleanup</text>
+  <text x="160" y="629" text-anchor="middle" style="font-size:11px; fill:#4e342e;">Restore FinalPolicy + SIP</text>
+  <text x="160" y="643" text-anchor="middle" style="font-size:11px; fill:#4e342e;">Delete uploaded DLL</text>
+
+  <!-- ═══════ RIGHT: TARGET ═══════ -->
+  <rect x="370" y="70" width="500" height="630" rx="8" fill="none" stroke="#c62828" stroke-width="2" stroke-dasharray="6,4" filter="url(#pencil)"/>
+  <text x="620" y="90" text-anchor="middle" style="font-size:14px; font-weight:bold; fill:#c62828;">Target (Windows)</text>
+
+  <!-- Registry state -->
+  <rect x="400" y="180" width="440" height="70" rx="6" fill="#ffebee" stroke="#ef5350" stroke-width="2" filter="url(#pencil)"/>
+  <text x="620" y="200" text-anchor="middle" style="font-size:12px; fill:#c62828; font-weight:bold;">HKLM\...\Trust\FinalPolicy\{GENERIC_VERIFY_V2}</text>
+  <text x="620" y="220" text-anchor="middle" style="font-size:12px; fill:#c62828;">$DLL = C:\Windows\Temp\sipexec_xxxxxx.dll</text>
+  <text x="620" y="238" text-anchor="middle" style="font-size:12px; fill:#c62828;">$Function = SipExecFinalPolicy</text>
+
+  <!-- WMI query triggers new wmiprvse -->
+  <rect x="430" y="310" width="200" height="38" rx="6" fill="#ede7f6" stroke="#7e57c2" stroke-width="2" filter="url(#pencil)"/>
+  <text x="530" y="334" text-anchor="middle" style="font-size:12px; fill:#4527a0;">svchost (DcomLaunch)</text>
+
+  <line x1="530" y1="348" x2="530" y2="370" stroke="#555" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="430" y="375" width="200" height="38" rx="6" fill="#ede7f6" stroke="#7e57c2" stroke-width="2" filter="url(#pencil)"/>
+  <text x="530" y="399" text-anchor="middle" style="font-size:12px; fill:#4527a0;">wmiprvse.exe (new)</text>
+
+  <line x1="530" y1="413" x2="530" y2="435" stroke="#c62828" stroke-width="2" marker-end="url(#redarrow)"/>
+  <text x="545" y="428" style="font-size:10px; fill:#c62828;">loads provider → WVT call</text>
+
+  <!-- FinalPolicy loads payload -->
+  <rect x="400" y="440" width="260" height="55" rx="6" fill="#e53935" stroke="#b71c1c" stroke-width="2.5" filter="url(#pencil)"/>
+  <text x="530" y="463" text-anchor="middle" style="font-size:14px; fill:#fff; font-weight:bold;">Payload DLL loads</text>
+  <text x="530" y="483" text-anchor="middle" style="font-size:11px; fill:#ffcdd2;">SipExecFinalPolicy() called</text>
+
+  <line x1="530" y1="495" x2="530" y2="520" stroke="#c62828" stroke-width="2" marker-end="url(#redarrow)"/>
+
+  <!-- Named pipe created -->
+  <rect x="400" y="525" width="260" height="50" rx="6" fill="#ffebee" stroke="#ef5350" stroke-width="2" filter="url(#pencil)"/>
+  <text x="530" y="547" text-anchor="middle" style="font-size:12px; fill:#c62828; font-weight:bold;">\\.\pipe\sipexec created</text>
+  <text x="530" y="563" text-anchor="middle" style="font-size:11px; fill:#c62828;">Blocks FinalPolicy return (keeps host alive)</text>
+
+  <!-- Pipe C2 loop -->
+  <rect x="400" y="600" width="260" height="55" rx="6" fill="#c8e6c9" stroke="#388e3c" stroke-width="2" filter="url(#pencil)"/>
+  <text x="530" y="622" text-anchor="middle" style="font-size:12px; fill:#1b5e20; font-weight:bold;">Pipe Worker Loop</text>
+  <text x="530" y="639" text-anchor="middle" style="font-size:11px; fill:#2e7d32;">read cmd → CreateProcess → write output</text>
+
+  <!-- Process tree inset -->
+  <rect x="700" y="310" width="150" height="120" rx="5" fill="#f3e5f5" stroke="#ab47bc" stroke-width="1.5" filter="url(#pencil)"/>
+  <text x="775" y="330" text-anchor="middle" style="font-size:11px; fill:#6a1b9a; font-weight:bold;">Process Tree</text>
+  <text x="710" y="350" style="font-size:11px; fill:#4a148c;">svchost.exe</text>
+  <text x="720" y="368" style="font-size:11px; fill:#4a148c;">└ wmiprvse.exe</text>
+  <text x="730" y="386" style="font-size:11px; fill:#4a148c;">  └ cmd.exe /c …</text>
+  <text x="710" y="418" style="font-size:10px; fill:#888;">No mmc, no dism</text>
+
+  <!-- ═══════ ARROWS ACROSS ═══════ -->
+  <!-- Stage arrow -->
+  <line x1="270" y1="135" x2="395" y2="200" stroke="#42a5f5" stroke-width="2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <text x="320" y="155" style="font-size:10px; fill:#1565c0;">SMB put / UNC</text>
+
+  <!-- Hijack arrow -->
+  <line x1="270" y1="210" x2="395" y2="210" stroke="#ffb74d" stroke-width="2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <text x="320" y="200" style="font-size:10px; fill:#e65100;">DCOM WMI</text>
+
+  <!-- Trigger arrow -->
+  <line x1="270" y1="355" x2="425" y2="330" stroke="#7e57c2" stroke-width="2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <text x="320" y="340" style="font-size:10px; fill:#4527a0;">DCOM WMI query</text>
+
+  <!-- Pipe connect arrow -->
+  <line x1="270" y1="455" x2="395" y2="550" stroke="#66bb6a" stroke-width="2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <text x="310" y="510" style="font-size:10px; fill:#2e7d32;">SMB IPC$</text>
+
+  <!-- Shell bidirectional -->
+  <line x1="270" y1="535" x2="395" y2="627" stroke="#388e3c" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="395" y1="633" x2="270" y2="540" stroke="#388e3c" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Optional SIP hijack note -->
+  <rect x="700" y="450" width="160" height="80" rx="5" fill="#fff8e1" stroke="#ffc107" stroke-width="1.5" filter="url(#pencil)"/>
+  <text x="780" y="470" text-anchor="middle" style="font-size:11px; fill:#f57f17; font-weight:bold;">Optional: -sig-hijack</text>
+  <text x="780" y="488" text-anchor="middle" style="font-size:10px; fill:#f57f17;">Redirects SIP verify →</text>
+  <text x="780" y="504" text-anchor="middle" style="font-size:10px; fill:#f57f17;">ntdll!DbgUiContinue</text>
+  <text x="780" y="520" text-anchor="middle" style="font-size:10px; fill:#f57f17;">DLL appears MS-signed</text>
+
+  <!-- Legend -->
+  <rect x="30" y="670" width="250" height="18" rx="3" fill="none"/>
+  <text x="35" y="685" style="font-size:10px; fill:#666;">Ports: TCP 135 (DCOM/WMI) + TCP 445 (SMB) + dynamic RPC</text>
+</svg>

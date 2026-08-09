@@ -66,6 +66,7 @@ class SMBServer(threading.Thread):
         smbConfig.set('global', 'server_name', 'server')
         smbConfig.set('global', 'server_os', 'UNIX')
         smbConfig.set('global', 'server_domain', 'WORKGROUP')
+        smbConfig.set('global', 'SMB2Support', 'True')
         smbConfig.set('global', 'log_file', '')
         smbConfig.set('global', 'credentials_file', '')
 

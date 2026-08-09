@@ -42,7 +42,7 @@
 
   <!-- IsMyFileType2 loop -->
   <rect x="150" y="215" width="500" height="45" rx="6" fill="#ede7f6" stroke="#7e57c2" stroke-width="2" filter="url(#pencil)"/>
-  <text x="400" y="237" text-anchor="middle" style="font-size:13px; fill:#4527a0;">For each registered GUID: call IsMyFileType2(fileName, &guid)</text>
+  <text x="400" y="237" text-anchor="middle" style="font-size:13px; fill:#4527a0;">For each registered GUID: call IsMyFileType2(fileName, pGuid)</text>
   <text x="400" y="253" text-anchor="middle" style="font-size:11px; fill:#7b1fa2;">LoadLibrary(Dll) + GetProcAddress(FuncName) + call</text>
 
   <line x1="400" y1="260" x2="400" y2="285" stroke="#c62828" stroke-width="3"/>
