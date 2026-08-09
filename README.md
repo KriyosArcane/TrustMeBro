@@ -4,6 +4,8 @@ Authenticode signature manipulation toolkit for Red Team operations and security
 
 Available in Python (cross-platform) and C++ (Windows native).
 
+📖 **[Wiki](https://github.com/KriyosArcane/TrustMeBro/wiki)** — Deep-dive documentation, SIP maps, OPSEC notes, detection rules, and research notes.
+
 > **Registry changes are cached per-process.** After running `hijack`, `sip-exec install`, or `clean`, you must **log out and log back in** or start a new process to see the effect. If `signtool verify` or `Get-AuthenticodeSignature` still shows the old result, close the process and open a fresh one. FinalPolicy and SIP hijack changes survive reboot.
 
 ## Repository Structure
