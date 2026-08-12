@@ -550,7 +550,8 @@ class RemoteShell(cmd.Cmd):
 
     def execute_remote(self, data):
         if self.__shell == "powershell":
-            wrapped = f"powershell.exe -nop -w hidden -c \"Set-Location '{self.__pwd}'; {data}; (Get-Location).Path\""
+            # ponytail: ^; escapes semicolons from cmd.exe (DLL wraps in cmd.exe /c)
+            wrapped = f"powershell.exe -nop -c Set-Location '{self.__pwd}'^; {data}^; (Get-Location).Path"
         else:
             wrapped = f"cd /d {self.__pwd} && {data} & cd"
 
