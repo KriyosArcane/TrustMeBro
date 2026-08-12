@@ -143,6 +143,10 @@ class SIPEXEC:
         self.__dcomDefault = self.__wmiDefault = None
         self.__dcomCimv2 = self.__wmiCimv2 = None
 
+        # Suppress impacket DCOM listener thread timeouts (they print tracebacks to stderr)
+        _orig = threading.excepthook
+        threading.excepthook = lambda a: None if isinstance(a.exc_value, (TimeoutError, OSError)) else _orig(a)
+
     def __newDCOM(self, addr):
         import socket as _sock
         old = _sock.getdefaulttimeout()
@@ -441,6 +445,8 @@ class SIPEXEC:
 
         # Kill wmiprvse in parallel with restore (clears FinalPolicy cache for next run)
         def _kill_cleanup():
+            # Suppress impacket noise during kill (wmiprvse dies mid-RPC)
+            logging.getLogger("impacket").setLevel(logging.CRITICAL)
             try:
                 dcom = self.__newDCOM(addr)
                 iI = dcom.CoCreateInstanceEx(wmi.CLSID_WbemLevel1Login, wmi.IID_IWbemLevel1Login)
@@ -494,12 +500,6 @@ class SIPEXEC:
             time.sleep(0.2)
         if self.__shareDir and os.path.exists(self.__shareDir):
             shutil.rmtree(self.__shareDir, ignore_errors=True)
-
-        # Suppress DCOM listener thread timeout noise on exit
-        logging.getLogger("impacket").setLevel(logging.CRITICAL)
-        import threading as _th
-        _orig_hook = _th.excepthook
-        _th.excepthook = lambda args: None if isinstance(args.exc_value, (TimeoutError, OSError)) else _orig_hook(args)
 
 
 class RemoteShell(cmd.Cmd):
