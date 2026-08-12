@@ -495,6 +495,12 @@ class SIPEXEC:
         if self.__shareDir and os.path.exists(self.__shareDir):
             shutil.rmtree(self.__shareDir, ignore_errors=True)
 
+        # Suppress DCOM listener thread timeout noise on exit
+        logging.getLogger("impacket").setLevel(logging.CRITICAL)
+        import threading as _th
+        _orig_hook = _th.excepthook
+        _th.excepthook = lambda args: None if isinstance(args.exc_value, (TimeoutError, OSError)) else _orig_hook(args)
+
 
 class RemoteShell(cmd.Cmd):
     def __init__(self, smbConnection, tid, fid, shell="cmd"):
@@ -569,9 +575,9 @@ class RemoteShell(cmd.Cmd):
 
         # Last line is the current directory from `cd` / `Get-Location`
         lines = text.split("\n")
-        if len(lines) > 1:
+        if lines:
             last = lines[-1].strip()
-            if last and (last[1:3] == ":\\" or last[1:3] == ":/"):
+            if last and len(last) >= 3 and last[1:3] == ":\\":
                 self.__pwd = last
                 self.prompt = f"{self.__pwd}> "
                 text = "\n".join(lines[:-1]).rstrip("\r\n")
